@@ -149,9 +149,12 @@ async (conn, mek, m, { reply }) => {
     try {
         if (!m.quoted) return await reply('❌ කරුණාකර AI එකෙන් දුන්න Analysis මැසේජ් එකට Reply කරමින් .track ලෙස යවන්න.');
         
-        const quotedText = m.quoted.text || m.quoted.body;
+        // Quoted message එකේ text එක හරියටම ගන්න (WhatsApp Bug Fix)
+        const quotedText = m.quoted.conversation || m.quoted.extendedTextMessage?.text || m.quoted.text || m.quoted.body || "";
         
-        // Coin එක හොයාගැනීම
+        if (!quotedText) return await reply('❌ Quoted මැසේජ් එක කියවීමට නොහැක. කරුණාකර නැවත Reply කරන්න.');
+
+        // Coin එක හොයාගැනීම (Regex)
         const coinMatch = quotedText.match(/🪙 \*Coin:\* ([A-Z]+)/);
         if (!coinMatch) return await reply('❌ මෙය නිවැරදි Analysis පණිවිඩයක් නොවේ.');
         const coin = coinMatch[1] + 'USDT';
@@ -159,9 +162,10 @@ async (conn, mek, m, { reply }) => {
         // Trading Type එක හොයාගැනීම
         const type = quotedText.includes('SPOT') ? 'spot' : 'future';
 
-        // Hidden Targets ටික අල්ලගැනීම (Regex)
-        const targetMatch = quotedText.match(/\[TARGETS\|ENTRY:([0-9.]+)\|TP:([0-9.]+)\|SL:([0-9.]+)\]/);
-        if (!targetMatch) return await reply('❌ AI එක විසින් Entry/TP/SL දත්ත ලබා දී නැත. වෙනත් Timeframe එකක් උත්සාහ කරන්න.');
+        // Hidden Targets ටික අල්ලගැනීම (Spaces තිබුණත් අල්ලගන්න පුළුවන් විදියට හැදූ Regex එක)
+        const targetMatch = quotedText.match(/\[TARGETS\|ENTRY:\s*([0-9.]+)\s*\|TP:\s*([0-9.]+)\s*\|SL:\s*([0-9.]+)\s*\]/);
+        
+        if (!targetMatch) return await reply('❌ AI එක විසින් Entry/TP/SL දත්ත ලබා දී නැත. වෙනත් Timeframe එකක් උත්සාහ කරන්න හෝ AI රිප්ලයි එකේ අගයන් තිබේදැයි පරීක්ෂා කරන්න.');
 
         const entry = parseFloat(targetMatch[1]);
         const tp = parseFloat(targetMatch[2]);
