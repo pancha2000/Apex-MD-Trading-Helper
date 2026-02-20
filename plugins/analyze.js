@@ -5,7 +5,7 @@ const axios = require('axios');
 cmd({
     pattern: "analyze",
     alias: ["crypto", "market", "trade"],
-    desc: "Analyze crypto market using Binance & AI via Proxies",
+    desc: "Analyze crypto market using Official Binance API & AI",
     category: "crypto",
     react: "📈",
     filename: __filename
@@ -17,21 +17,29 @@ async (conn, mek, m, { reply, text, args }) => {
         }
 
         if (!config.GEMINI_API) {
-            return await reply('❌ GEMINI_API key එක config.env ෆයිල් එකේ නැහැ! කරුණාකර එය ඇතුළත් කරන්න.');
+            return await reply('❌ GEMINI_API key එක config.env ෆයිල් එකේ නැහැ!');
+        }
+        
+        if (!config.BINANCE_API) {
+            return await reply('❌ BINANCE_API key එක config.env ෆයිල් එකේ නැහැ! කරුණාකර එය ඇතුළත් කරන්න.');
         }
 
         await m.react('⏳');
         await reply('⏳ *Binance දත්ත ලබා ගනිමින් සහ AI හරහා විශ්ලේෂණය කරමින් පවතී...*');
 
-        // User දෙන coin එක (උදා: btc) USDT එක්ක සම්බන්ධ කිරීම
         let coin = args[0].toUpperCase();
         if(!coin.endsWith('USDT')) coin += 'USDT';
 
-        // 1. Binance API එකෙන් Live Data ගැනීම (US Server Block එක මගහැරීමට Proxy එකක් හරහා)
+        // 1. Config එකෙන් Binance API Key එක අරගෙන Request එක යැවීම
         const binanceUrl = `https://api.binance.com/api/v3/ticker/24hr?symbol=${coin}`;
-        const url = `https://corsproxy.io/?${encodeURIComponent(binanceUrl)}`; // 👈 Proxy හරහා Binance යැවීම
         
-        const res = await axios.get(url);
+        const res = await axios.get(binanceUrl, { 
+            headers: { 
+                'Content-Type': 'application/json',
+                'X-MBX-APIKEY': config.BINANCE_API // 👈 මෙතනින් තමයි Key එක Call වෙන්නේ
+            } 
+        });
+        
         const data = res.data;
 
         const price = parseFloat(data.lastPrice).toFixed(2);
@@ -55,7 +63,7 @@ async (conn, mek, m, { reply, text, args }) => {
         Keep it clear, concise, and use emojis. 
         IMPORTANT: Reply ONLY in Sinhala language. Add a disclaimer that this is not financial advice.`;
 
-        // 3. ඔයාගේ Cloudflare Private Proxy හරහා Gemini API වෙත Request එක යැවීම
+        // 3. Cloudflare Private Proxy හරහා Gemini API වෙත Request එක යැවීම
         const proxyUrl = `https://patient-band-7ce9.cdilrukshi52.workers.dev/v1beta/models/gemini-1.5-flash:generateContent?key=${config.GEMINI_API}`;
         
         const aiPayload = {
@@ -90,10 +98,11 @@ ${aiResponse}
 
     } catch (e) {
         await m.react('❌');
+        const errorMsg = e.response?.data?.msg || e.response?.data?.error?.message || e.message;
+        
         if (e.response && e.response.status === 400 && !e.response.config.url.includes('workers.dev')) {
             await reply(`❌ '${text}' යනු වලංගු Coin එකක් නොවේ. කරුණාකර BTC, ETH, SOL වැනි නිවැරදි නමක් ලබා දෙන්න.`);
         } else {
-            const errorMsg = e.response?.data?.error?.message || e.message;
             await reply('❌ Error: ' + errorMsg);
         }
     }
