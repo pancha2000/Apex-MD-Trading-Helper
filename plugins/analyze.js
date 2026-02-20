@@ -17,12 +17,12 @@ async (conn, mek, m, { reply, text, args }) => {
         if (!config.BINANCE_API) return await reply('❌ BINANCE_API key එක config.env ෆයිල් එකේ නැහැ!');
 
         await m.react('⏳');
-        await reply('⏳ *Binance දත්ත ලබා ගනිමින් සහ Llama 3 AI හරහා විශ්ලේෂණය කරමින් පවතී...*');
+        await reply('⏳ *Binance දත්ත ලබා ගනිමින් සහ Llama 3.3 AI හරහා විශ්ලේෂණය කරමින් පවතී...*');
 
         let coin = args[0].toUpperCase();
         if (!coin.endsWith('USDT')) coin += 'USDT';
 
-        // 1. Direct Binance API Call (Proxy ඉවත් කර ඇත, ඔයාගේ Key එක භාවිතා කරයි)
+        // 1. Direct Binance API Call
         const binanceUrl = `https://api.binance.com/api/v3/ticker/24hr?symbol=${coin}`;
         const res = await axios.get(binanceUrl, {
             headers: {
@@ -53,10 +53,10 @@ async (conn, mek, m, { reply, text, args }) => {
         Keep it clear, concise, and use emojis.
         IMPORTANT: Reply ONLY in Sinhala language. Add a disclaimer that this is not financial advice.`;
 
-        // 3. Groq API Call (Llama 3)
+        // 3. Groq API Call (Llama 3.3 අලුත්ම මොඩල් එක)
         const groqUrl = 'https://api.groq.com/openai/v1/chat/completions';
         const aiPayload = {
-            model: "llama3-70b-8192", 
+            model: "llama-3.3-70b-versatile", // 👈 මෙන්න මේ නම තමයි අලුත් කළේ
             messages: [{ role: "user", content: prompt }]
         };
 
