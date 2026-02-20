@@ -25,6 +25,8 @@ const config = {
     
     // API Keys (ඉතා වැදගත්)
     GEMINI_API: process.env.GEMINI_API || "",
+    BINANCE_API: process.env.BINANCE_API || "", // 👈 අලුතින් එකතු කළ Binance Key එක
+    
     
     // Check Owner Function
     isOwner: (sender) => {
