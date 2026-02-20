@@ -1,18 +1,11 @@
 const { cmd } = require('../lib/commands');
 const config = require('../config');
 const axios = require('axios');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-
-// Initialize Gemini AI
-let genAI;
-if (config.GEMINI_API) {
-    genAI = new GoogleGenerativeAI(config.GEMINI_API);
-}
 
 cmd({
     pattern: "analyze",
     alias: ["crypto", "market", "trade"],
-    desc: "Analyze crypto market using Binance & AI",
+    desc: "Analyze crypto market using Binance & AI via Proxy",
     category: "crypto",
     react: "📈",
     filename: __filename
@@ -60,11 +53,19 @@ async (conn, mek, m, { reply, text, args }) => {
         Keep it clear, concise, and use emojis. 
         IMPORTANT: Reply ONLY in Sinhala language. Add a disclaimer that this is not financial advice.`;
 
-        // 3. AI හරහා විශ්ලේෂණය ලබා ගැනීම
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        const aiResponse = response.text();
+        // 3. Reverse Proxy හරහා Gemini API වෙත Request එක යැවීම (Bypasses IP Blocks)
+        const proxyUrl = `https://gemini-proxy.free-api.workers.dev/v1beta/models/gemini-1.5-flash:generateContent?key=${config.GEMINI_API}`;
+        
+        const aiPayload = {
+            contents: [{ parts: [{ text: prompt }] }]
+        };
+
+        const aiRes = await axios.post(proxyUrl, aiPayload, {
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        // Proxy එකෙන් එන ප්‍රතිචාරය (Response) ලබා ගැනීම
+        const aiResponse = aiRes.data.candidates[0].content.parts[0].text;
 
         // 4. WhatsApp Message එක Format කිරීම
         const outMsg = `
@@ -88,12 +89,12 @@ ${aiResponse}
 
     } catch (e) {
         await m.react('❌');
-        // Binance එකේ නැති coin එකක් ගැහුවොත්
-        if (e.response && e.response.status === 400) {
+        // Error එක මොකක්ද කියලා පැහැදිලිව අඳුරගන්න
+        if (e.response && e.response.status === 400 && !e.response.config.url.includes('gemini')) {
             await reply(`❌ '${text}' යනු වලංගු Coin එකක් නොවේ. කරුණාකර BTC, ETH, SOL වැනි නිවැරදි නමක් ලබා දෙන්න.`);
         } else {
-            await reply('❌ Error: ' + e.message);
+            const errorMsg = e.response?.data?.error?.message || e.message;
+            await reply('❌ AI Error: ' + errorMsg);
         }
     }
 });
-
