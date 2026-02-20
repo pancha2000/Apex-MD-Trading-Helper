@@ -61,7 +61,7 @@ async (conn, mek, m, { reply, text, args }) => {
         IMPORTANT: Reply ONLY in Sinhala language. Add a disclaimer that this is not financial advice.`;
 
         // 3. AI හරහා විශ්ලේෂණය ලබා ගැනීම
-        const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
         const result = await model.generateContent(prompt);
         const response = await result.response;
         const aiResponse = response.text();
