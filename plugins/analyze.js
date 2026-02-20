@@ -1,11 +1,12 @@
 const { cmd } = require('../lib/commands');
 const config = require('../config');
 const axios = require('axios');
+const { GoogleGenerativeAI } = require('@google/generative-ai'); // නිල Google Library එක
 
 cmd({
     pattern: "analyze",
     alias: ["crypto", "market", "trade"],
-    desc: "Analyze crypto market properly using Binance & Gemini AI",
+    desc: "Analyze crypto market properly using Binance Proxy & Official Gemini SDK",
     category: "crypto",
     react: "📈",
     filename: __filename
@@ -54,18 +55,12 @@ async (conn, mek, m, { reply, text, args }) => {
         Keep it clear, concise, and use emojis. 
         IMPORTANT: Reply ONLY in Sinhala language. Add a disclaimer that this is not financial advice.`;
 
-        // 3. Gemini API වෙත Request එක යැවීම (v1 API සහ gemini-1.5-flash-latest Model එක භාවිතා කර ඇත)
-        const geminiUrl = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash-latest:generateContent?key=${config.GEMINI_API}`;
-        
-        const aiPayload = {
-            contents: [{ parts: [{ text: prompt }] }]
-        };
-
-        const aiRes = await axios.post(geminiUrl, aiPayload, {
-            headers: { 'Content-Type': 'application/json' }
-        });
-
-        const aiResponse = aiRes.data.candidates[0].content.parts[0].text;
+        // 3. නිල Google Generative AI Library එක භාවිතා කිරීම (US Server එකක් නිසා Block වෙන්නේ නැත)
+        // මේකෙන් URL ගැටළු කිසිවක් එන්නේ නැත, එය ස්වයංක්‍රීයව අලුත්ම version එක තෝරාගනී.
+        const genAI = new GoogleGenerativeAI(config.GEMINI_API);
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const result = await model.generateContent(prompt);
+        const aiResponse = result.response.text();
 
         // 4. WhatsApp Message එක
         const outMsg = `
@@ -94,7 +89,7 @@ ${aiResponse}
         if (e.response && e.response.status === 404 && e.config && e.config.url.includes('allorigins')) {
             await reply(`❌ '${text}' යනු වලංගු Coin එකක් නොවේ. කරුණාකර BTC, ETH, SOL වැනි නිවැරදි නමක් ලබා දෙන්න.`);
         } else {
-            const errorMsg = e.response?.data?.error?.message || e.message;
+            const errorMsg = e.message || e.toString();
             await reply('❌ Error: ' + errorMsg);
         }
     }
