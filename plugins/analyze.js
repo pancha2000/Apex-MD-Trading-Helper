@@ -58,7 +58,7 @@ async (conn, mek, m, { reply, text, args }) => {
         // 3. නිල Google Generative AI Library එක භාවිතා කිරීම (US Server එකක් නිසා Block වෙන්නේ නැත)
         // මේකෙන් URL ගැටළු කිසිවක් එන්නේ නැත, එය ස්වයංක්‍රීයව අලුත්ම version එක තෝරාගනී.
         const genAI = new GoogleGenerativeAI(config.GEMINI_API);
-        const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
         const result = await model.generateContent(prompt);
         const aiResponse = result.response.text();
 
