@@ -5,7 +5,7 @@ const axios = require('axios');
 cmd({
     pattern: "analyze",
     alias: ["crypto", "market", "trade"],
-    desc: "Analyze crypto market using MEXC & AI via Private Proxy",
+    desc: "Analyze crypto market using Binance & AI via Proxies",
     category: "crypto",
     react: "📈",
     filename: __filename
@@ -21,14 +21,16 @@ async (conn, mek, m, { reply, text, args }) => {
         }
 
         await m.react('⏳');
-        await reply('⏳ *Market දත්ත ලබා ගනිමින් සහ AI හරහා විශ්ලේෂණය කරමින් පවතී...*');
+        await reply('⏳ *Binance දත්ත ලබා ගනිමින් සහ AI හරහා විශ්ලේෂණය කරමින් පවතී...*');
 
         // User දෙන coin එක (උදා: btc) USDT එක්ක සම්බන්ධ කිරීම
         let coin = args[0].toUpperCase();
         if(!coin.endsWith('USDT')) coin += 'USDT';
 
-        // 1. MEXC API එකෙන් Live Data ගැනීම (Binance වෙනුවට ඇමරිකාවේ වැඩ කරන API එක)
-        const url = `https://api.mexc.com/api/v3/ticker/24hr?symbol=${coin}`;
+        // 1. Binance API එකෙන් Live Data ගැනීම (US Server Block එක මගහැරීමට Proxy එකක් හරහා)
+        const binanceUrl = `https://api.binance.com/api/v3/ticker/24hr?symbol=${coin}`;
+        const url = `https://corsproxy.io/?${encodeURIComponent(binanceUrl)}`; // 👈 Proxy හරහා Binance යැවීම
+        
         const res = await axios.get(url);
         const data = res.data;
 
@@ -39,7 +41,7 @@ async (conn, mek, m, { reply, text, args }) => {
         const vol = parseFloat(data.volume).toFixed(2);
 
         // 2. AI එක සඳහා Prompt එක සැකසීම
-        const prompt = `You are an expert crypto trading analyst. Analyze the following 24-hour market data for ${coin}:
+        const prompt = `You are an expert crypto trading analyst. Analyze the following 24-hour market data for ${coin} from Binance:
         - Current Price: $${price}
         - 24h Price Change: ${change}%
         - 24h High: $${high}
@@ -92,7 +94,7 @@ ${aiResponse}
             await reply(`❌ '${text}' යනු වලංගු Coin එකක් නොවේ. කරුණාකර BTC, ETH, SOL වැනි නිවැරදි නමක් ලබා දෙන්න.`);
         } else {
             const errorMsg = e.response?.data?.error?.message || e.message;
-            await reply('❌ AI Error: ' + errorMsg);
+            await reply('❌ Error: ' + errorMsg);
         }
     }
 });
