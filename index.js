@@ -15,7 +15,14 @@ const path = require('path');
 const config = require('./config');
 const { connectDB } = require('./lib/database');
 const { handler } = require('./lib/commands');
-const { serialize } = require('./lib/functions');
+
+// Require functions (Handling both possible file names)
+let serialize;
+if (fs.existsSync('./lib/functions.js')) {
+    serialize = require('./lib/functions').serialize;
+} else {
+    serialize = require('./lib/function').serialize;
+}
 
 // Load Commands
 require('fs').readdirSync('./plugins/').forEach(plugin => {
@@ -24,7 +31,7 @@ require('fs').readdirSync('./plugins/').forEach(plugin => {
     }
 });
 
-// Express server (Required for Koyeb to keep bot alive)
+// Express server
 const app = express();
 const PORT = process.env.PORT || 8000;
 
@@ -41,7 +48,6 @@ async function downloadSession() {
     if (!fs.existsSync(path.join(__dirname, 'auth_info', 'creds.json')) && config.SESSION_ID) {
         console.log('📥 Downloading Session from Mega...');
         try {
-            // "https://mega.nz/file/" කියන එක SESSION_ID එකට එකතු කරලා ගන්නවා
             const file = File.fromURL(`https://mega.nz/file/${config.SESSION_ID}`);
             const data = await file.downloadBuffer();
             
@@ -61,10 +67,8 @@ async function downloadSession() {
 async function startBot() {
     console.log('🔄 Starting Crypto AI Bot...');
     
-    // Connect to Database
     if (config.MONGODB) await connectDB();
 
-    // Download Session First
     await downloadSession();
 
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
@@ -95,33 +99,58 @@ async function startBot() {
 
     conn.ev.on('creds.update', saveCreds);
 
+    // MESSAGE HANDLING BLOCK
     conn.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return;
         const msg = messages[0];
         if (!msg.message) return;
 
-        const mek = await serialize(conn, msg);
-        if (!mek) return;
+        try {
+            // Fix parameter order issue safely
+            let mek;
+            try { mek = await serialize(msg, conn); } catch(e) {}
+            if (!mek) { try { mek = await serialize(conn, msg); } catch(e) {} }
+            if (!mek) return;
 
-        const body = mek.body || '';
-        const prefix = config.PREFIX || '.';
-        const isCmd = body.startsWith(prefix);
-        const command = isCmd ? body.slice(prefix.length).trim().split(' ').shift().toLowerCase() : '';
-        const args = body.trim().split(/ +/).slice(1);
-        const text = args.join(' ');
+            const body = mek.body || '';
+            const prefix = config.PREFIX || '.';
+            const isCmd = body.startsWith(prefix);
+            const command = isCmd ? body.slice(prefix.length).trim().split(' ').shift().toLowerCase() : '';
+            const args = body.trim().split(/ +/).slice(1);
+            const text = args.join(' ');
+            const from = mek.from;
 
-        if (isCmd) {
-            const cmd = handler.findCommand(command);
-            if (cmd) {
-                try {
-                    await cmd.function(conn, mek, msg, {
-                        reply: async (text) => await conn.sendMessage(msg.key.remoteJid, { text: text }, { quoted: msg }),
-                        text, args, body, command
+            // React function override
+            mek.react = async (emoji) => {
+                await conn.sendMessage(from, { react: { text: emoji, key: msg.key } });
+            };
+
+            // Download override (if needed for stickers etc)
+            mek.download = async () => {
+                const { downloadMediaMessage } = require('@whiskeysockets/baileys');
+                return await downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }) });
+            };
+
+            if (isCmd) {
+                console.log(`\n💬 Command Received: ${command}`);
+                const cmd = handler.findCommand(command);
+                if (cmd) {
+                    // Check if Owner only command
+                    if (cmd.isOwner && !config.isOwner(mek.sender)) {
+                        return await conn.sendMessage(from, { text: '❌ This command is for the owner only.' }, { quoted: msg });
+                    }
+
+                    await cmd.function(conn, mek, mek, {
+                        reply: async (text) => await conn.sendMessage(from, { text: text }, { quoted: msg }),
+                        text, args, body, command, from, q: text
                     });
-                } catch (e) {
-                    console.error('Command Error:', e);
+                    console.log(`✅ Command '${command}' Executed!`);
+                } else {
+                    console.log(`⚠️ Command '${command}' not found!`);
                 }
             }
+        } catch (e) {
+            console.error('❌ General Message Error:', e);
         }
     });
 }
