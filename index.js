@@ -14,6 +14,7 @@ const path = require('path');
 const config = require('./config');
 const { connectDB } = require('./lib/database');
 const { handler } = require('./lib/commands');
+const { startScanner } = require('./lib/scanner');
 
 let serialize;
 if (fs.existsSync('./lib/functions.js')) {
@@ -105,6 +106,9 @@ async function startBot() {
             }
         } else if (connection === 'open') {
             console.log('✅ Bot Connected to WhatsApp Successfully!');
+            // බොට් සාර්ථකව WhatsApp වලට සම්බන්ධ වූ විට Scanner එක ආරම්භ කරන්න
+startScanner(conn);
+
         }
     });
 
