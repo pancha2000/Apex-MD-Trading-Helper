@@ -40,34 +40,40 @@ app.listen(PORT, () => {
 });
 
 async function downloadSession() {
-    // හැම Start එකකදිම පරණ auth_info මකලා අලුතින්ම බාගන්නවා
     if (fs.existsSync(path.join(__dirname, 'auth_info'))) {
         console.log('🗑️ Clearing old session files...');
         fs.rmSync(path.join(__dirname, 'auth_info'), { recursive: true, force: true });
     }
-    
+
     if (config.SESSION_ID) {
         console.log('📥 Downloading Fresh Session from Mega...');
         try {
             const file = File.fromURL(`https://mega.nz/file/${config.SESSION_ID}`);
             const data = await file.downloadBuffer();
-            
             fs.mkdirSync(path.join(__dirname, 'auth_info'));
             fs.writeFileSync(path.join(__dirname, 'auth_info', 'creds.json'), data);
             console.log('✅ Session Downloaded Successfully!');
         } catch (e) {
-            console.error('❌ Error downloading session. Please check your SESSION_ID:', e.message);
+            console.error('❌ Error downloading session:', e.message);
         }
     }
 }
 
+// ✅ FIX: isFirstStart flag - session එකවරක් පමණක් download කරයි
+let isFirstStart = true;
+
 async function startBot() {
-    await downloadSession();
+    // ✅ FIX: Session පළමු සැරේ පමණක් download කරයි - reconnect වෙන සෑම සැරේ නැහැ
+    if (isFirstStart) {
+        await downloadSession();
+        isFirstStart = false;
+    }
 
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
     const { version, isLatest } = await fetchLatestBaileysVersion();
     console.log(`🔄 Using WA v${version.join('.')}, isLatest: ${isLatest}`);
 
+    // ✅ FIX: නව socket එකක් හදන විට පරණ listeners ගැටළු නෑ
     const conn = makeWASocket({
         version,
         logger: pino({ level: 'silent' }),
@@ -81,17 +87,21 @@ async function startBot() {
 
     conn.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect } = update;
-        
+
         if (connection === 'close') {
-            let reason = lastDisconnect.error?.output?.statusCode;
+            let reason = lastDisconnect?.error?.output?.statusCode;
             console.log(`⚠️ Connection Closed. Reason: ${reason}`);
-            
+
             if (reason === DisconnectReason.loggedOut || reason === 440 || reason === 401) {
-                console.log('❌ Session Invalid! You MUST generate a NEW Session ID and put it in config.env');
+                console.log('❌ Session Invalid! Generate a NEW Session ID.');
+                // ✅ FIX: process.exit() - platform (Railway/Heroku) restart කරයි
+                // ඒ නිසා listeners accumulate වෙන්නේ නැහැ
                 process.exit(1);
             } else {
-                console.log('🔄 Reconnecting in 3 seconds...');
-                setTimeout(startBot, 3000);
+                console.log('🔄 Reconnecting in 5 seconds...');
+                // ✅ FIX: conn destroy කරලා clean reconnect
+                conn.ev.removeAllListeners();
+                setTimeout(startBot, 5000);
             }
         } else if (connection === 'open') {
             console.log('✅ Bot Connected to WhatsApp Successfully!');
@@ -148,4 +158,3 @@ if (config.MONGODB) {
     connectDB().catch(err => console.error("DB Error:", err));
 }
 startBot();
-
