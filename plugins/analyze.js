@@ -1,12 +1,12 @@
 const { cmd } = require('../lib/commands');
 const config = require('../config');
 const axios = require('axios');
-const { GoogleGenerativeAI } = require('@google/generative-ai'); // නිල Google Library එක
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 cmd({
     pattern: "analyze",
     alias: ["crypto", "market", "trade"],
-    desc: "Analyze crypto market properly using Binance Proxy & Official Gemini SDK",
+    desc: "Analyze crypto market using Binance & Gemini AI",
     category: "crypto",
     react: "📈",
     filename: __filename
@@ -25,12 +25,12 @@ async (conn, mek, m, { reply, text, args }) => {
         await reply('⏳ *Binance දත්ත ලබා ගනිමින් සහ AI හරහා විශ්ලේෂණය කරමින් පවතී...*');
 
         let coin = args[0].toUpperCase();
-        if(!coin.endsWith('USDT')) coin += 'USDT';
+        if (!coin.endsWith('USDT')) coin += 'USDT';
 
-        // 1. Binance දත්ත ගැනීම (US Server Block වීම වැළැක්වීමට Proxy එකක් හරහා යැවීම)
+        // Binance data via proxy
         const binanceUrl = `https://api.binance.com/api/v3/ticker/24hr?symbol=${coin}`;
         const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(binanceUrl)}`;
-        
+
         const res = await axios.get(proxyUrl);
         const data = res.data;
 
@@ -40,7 +40,7 @@ async (conn, mek, m, { reply, text, args }) => {
         const low = parseFloat(data.lowPrice).toFixed(2);
         const vol = parseFloat(data.volume).toFixed(2);
 
-        // 2. AI Prompt එක
+        // AI Prompt
         const prompt = `You are an expert crypto trading analyst. Analyze the following 24-hour market data for ${coin} from Binance:
         - Current Price: $${price}
         - 24h Price Change: ${change}%
@@ -52,17 +52,15 @@ async (conn, mek, m, { reply, text, args }) => {
         1. Current Market Trend (Bullish/Bearish/Neutral)
         2. Key Support & Resistance levels (estimate based on high/low)
         3. A short trading advice/strategy.
-        Keep it clear, concise, and use emojis. 
+        Keep it clear, concise, and use emojis.
         IMPORTANT: Reply ONLY in Sinhala language. Add a disclaimer that this is not financial advice.`;
 
-        // 3. නිල Google Generative AI Library එක භාවිතා කිරීම (US Server එකක් නිසා Block වෙන්නේ නැත)
-        // මේකෙන් URL ගැටළු කිසිවක් එන්නේ නැත, එය ස්වයංක්‍රීයව අලුත්ම version එක තෝරාගනී.
+        // Gemini 1.5 Flash (0.24.1 compatible)
         const genAI = new GoogleGenerativeAI(config.GEMINI_API);
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
         const result = await model.generateContent(prompt);
         const aiResponse = result.response.text();
 
-        // 4. WhatsApp Message එක
         const outMsg = `
 ╔═══════════════════════════╗
 ║   📈 *CRYPTO AI ANALYSIS* ║
@@ -84,13 +82,10 @@ ${aiResponse}
 
     } catch (e) {
         await m.react('❌');
-        
-        // Error handling
-        if (e.response && e.response.status === 404 && e.config && e.config.url.includes('allorigins')) {
-            await reply(`❌ '${text}' යනු වලංගු Coin එකක් නොවේ. කරුණාකර BTC, ETH, SOL වැනි නිවැරදි නමක් ලබා දෙන්න.`);
+        if (e.response && e.response.status === 404) {
+            await reply(`❌ '${text}' යනු වලංගු Coin එකක් නොවේ. BTC, ETH, SOL වැනි නිවැරදි නමක් ලබා දෙන්න.`);
         } else {
-            const errorMsg = e.message || e.toString();
-            await reply('❌ Error: ' + errorMsg);
+            await reply('❌ Error: ' + (e.message || e.toString()));
         }
     }
 });
