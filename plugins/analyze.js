@@ -1,7 +1,15 @@
 const { cmd } = require('../lib/commands');
 const config = require('../config');
 const axios = require('axios');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+
+// Gemini API direct call (no package needed)
+async function callGemini(prompt) {
+    const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${config.GEMINI_API}`;
+    const response = await axios.post(url, {
+        contents: [{ parts: [{ text: prompt }] }]
+    });
+    return response.data.candidates[0].content.parts[0].text;
+}
 
 cmd({
     pattern: "analyze",
@@ -16,7 +24,6 @@ async (conn, mek, m, { reply, text, args }) => {
         if (!text) {
             return await reply('❌ කරුණාකර Coin එකක් ලබා දෙන්න!\n\n*උදාහරණ:* .analyze BTC');
         }
-
         if (!config.GEMINI_API) {
             return await reply('❌ GEMINI_API key එක config.env ෆයිල් එකේ නැහැ!');
         }
@@ -27,10 +34,9 @@ async (conn, mek, m, { reply, text, args }) => {
         let coin = args[0].toUpperCase();
         if (!coin.endsWith('USDT')) coin += 'USDT';
 
-        // Binance data via proxy
+        // Binance data
         const binanceUrl = `https://api.binance.com/api/v3/ticker/24hr?symbol=${coin}`;
         const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(binanceUrl)}`;
-
         const res = await axios.get(proxyUrl);
         const data = res.data;
 
@@ -40,7 +46,6 @@ async (conn, mek, m, { reply, text, args }) => {
         const low = parseFloat(data.lowPrice).toFixed(2);
         const vol = parseFloat(data.volume).toFixed(2);
 
-        // AI Prompt
         const prompt = `You are an expert crypto trading analyst. Analyze the following 24-hour market data for ${coin} from Binance:
         - Current Price: $${price}
         - 24h Price Change: ${change}%
@@ -55,11 +60,7 @@ async (conn, mek, m, { reply, text, args }) => {
         Keep it clear, concise, and use emojis.
         IMPORTANT: Reply ONLY in Sinhala language. Add a disclaimer that this is not financial advice.`;
 
-        // Gemini 1.5 Flash (0.24.1 compatible)
-        const genAI = new GoogleGenerativeAI(config.GEMINI_API);
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-        const result = await model.generateContent(prompt);
-        const aiResponse = result.response.text();
+        const aiResponse = await callGemini(prompt);
 
         const outMsg = `
 ╔═══════════════════════════╗
@@ -82,7 +83,9 @@ ${aiResponse}
 
     } catch (e) {
         await m.react('❌');
-        if (e.response && e.response.status === 404) {
+        if (e.response?.data?.error?.message) {
+            await reply('❌ Gemini Error: ' + e.response.data.error.message);
+        } else if (e.response?.status === 404) {
             await reply(`❌ '${text}' යනු වලංගු Coin එකක් නොවේ. BTC, ETH, SOL වැනි නිවැරදි නමක් ලබා දෙන්න.`);
         } else {
             await reply('❌ Error: ' + (e.message || e.toString()));
