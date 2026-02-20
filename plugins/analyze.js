@@ -5,7 +5,7 @@ const axios = require('axios');
 cmd({
     pattern: "analyze",
     alias: ["crypto", "market", "trade"],
-    desc: "Analyze crypto market using Binance & AI via Private Proxy",
+    desc: "Analyze crypto market using MEXC & AI via Private Proxy",
     category: "crypto",
     react: "📈",
     filename: __filename
@@ -21,14 +21,14 @@ async (conn, mek, m, { reply, text, args }) => {
         }
 
         await m.react('⏳');
-        await reply('⏳ *Binance දත්ත ලබා ගනිමින් සහ AI හරහා විශ්ලේෂණය කරමින් පවතී...*');
+        await reply('⏳ *Market දත්ත ලබා ගනිමින් සහ AI හරහා විශ්ලේෂණය කරමින් පවතී...*');
 
         // User දෙන coin එක (උදා: btc) USDT එක්ක සම්බන්ධ කිරීම
         let coin = args[0].toUpperCase();
         if(!coin.endsWith('USDT')) coin += 'USDT';
 
-        // 1. Binance API එකෙන් Live Data ගැනීම
-        const url = `https://api.binance.com/api/v3/ticker/24hr?symbol=${coin}`;
+        // 1. MEXC API එකෙන් Live Data ගැනීම (Binance වෙනුවට ඇමරිකාවේ වැඩ කරන API එක)
+        const url = `https://api.mexc.com/api/v3/ticker/24hr?symbol=${coin}`;
         const res = await axios.get(url);
         const data = res.data;
 
@@ -39,7 +39,7 @@ async (conn, mek, m, { reply, text, args }) => {
         const vol = parseFloat(data.volume).toFixed(2);
 
         // 2. AI එක සඳහා Prompt එක සැකසීම
-        const prompt = `You are an expert crypto trading analyst. Analyze the following 24-hour market data for ${coin} from Binance:
+        const prompt = `You are an expert crypto trading analyst. Analyze the following 24-hour market data for ${coin}:
         - Current Price: $${price}
         - 24h Price Change: ${change}%
         - 24h High: $${high}
@@ -64,7 +64,6 @@ async (conn, mek, m, { reply, text, args }) => {
             headers: { 'Content-Type': 'application/json' }
         });
 
-        // Proxy එකෙන් එන ප්‍රතිචාරය (Response) ලබා ගැනීම
         const aiResponse = aiRes.data.candidates[0].content.parts[0].text;
 
         // 4. WhatsApp Message එක Format කිරීම
