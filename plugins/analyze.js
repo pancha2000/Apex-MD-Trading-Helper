@@ -5,7 +5,7 @@ const axios = require('axios');
 cmd({
     pattern: "analyze",
     alias: ["crypto", "market", "trade"],
-    desc: "Analyze crypto market using Binance & AI via Proxy",
+    desc: "Analyze crypto market using Binance & AI via Private Proxy",
     category: "crypto",
     react: "📈",
     filename: __filename
@@ -53,8 +53,8 @@ async (conn, mek, m, { reply, text, args }) => {
         Keep it clear, concise, and use emojis. 
         IMPORTANT: Reply ONLY in Sinhala language. Add a disclaimer that this is not financial advice.`;
 
-        // 3. Reverse Proxy හරහා Gemini API වෙත Request එක යැවීම (Bypasses IP Blocks)
-        const proxyUrl = `https://gemini-proxy.free-api.workers.dev/v1beta/models/gemini-1.5-flash:generateContent?key=${config.GEMINI_API}`;
+        // 3. ඔයාගේ Cloudflare Private Proxy හරහා Gemini API වෙත Request එක යැවීම
+        const proxyUrl = `https://patient-band-7ce9.cdilrukshi52.workers.dev/v1beta/models/gemini-1.5-flash:generateContent?key=${config.GEMINI_API}`;
         
         const aiPayload = {
             contents: [{ parts: [{ text: prompt }] }]
@@ -89,8 +89,7 @@ ${aiResponse}
 
     } catch (e) {
         await m.react('❌');
-        // Error එක මොකක්ද කියලා පැහැදිලිව අඳුරගන්න
-        if (e.response && e.response.status === 400 && !e.response.config.url.includes('gemini')) {
+        if (e.response && e.response.status === 400 && !e.response.config.url.includes('workers.dev')) {
             await reply(`❌ '${text}' යනු වලංගු Coin එකක් නොවේ. කරුණාකර BTC, ETH, SOL වැනි නිවැරදි නමක් ලබා දෙන්න.`);
         } else {
             const errorMsg = e.response?.data?.error?.message || e.message;
