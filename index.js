@@ -4,10 +4,9 @@
  * ╚═══════════════════════════════════════════╝
  */
 
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const express = require('express');
-const qrcode = require('qrcode-terminal');
 const { File } = require('megajs');
 const fs = require('fs');
 const path = require('path');
@@ -16,7 +15,7 @@ const config = require('./config');
 const { connectDB } = require('./lib/database');
 const { handler } = require('./lib/commands');
 
-// Require functions (Handling both possible file names)
+// Require functions safely
 let serialize;
 if (fs.existsSync('./lib/functions.js')) {
     serialize = require('./lib/functions').serialize;
@@ -31,7 +30,7 @@ require('fs').readdirSync('./plugins/').forEach(plugin => {
     }
 });
 
-// Express server
+// Express server (Keeps Koyeb alive)
 const app = express();
 const PORT = process.env.PORT || 8000;
 
@@ -65,19 +64,21 @@ async function downloadSession() {
 
 // Start WhatsApp Bot
 async function startBot() {
-    console.log('🔄 Starting Crypto AI Bot...');
-    
-    if (config.MONGODB) await connectDB();
-
     await downloadSession();
 
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
+    const { version, isLatest } = await fetchLatestBaileysVersion();
+    console.log(`🔄 Using WA v${version.join('.')}, isLatest: ${isLatest}`);
 
     const conn = makeWASocket({
+        version,
         logger: pino({ level: 'silent' }),
-        printQRInTerminal: true,
-        browser: Browsers.macOS('Desktop'),
-        auth: state
+        printQRInTerminal: false,
+        browser: ['Apex-Crypto-Bot', 'Chrome', '1.0.0'], // 🔥 ස්ථිර Browser Signature එකක්
+        auth: state,
+        getMessage: async (key) => {
+            return { conversation: 'Apex Crypto Bot' }; // 🔥 Missing message error එක වලක්වයි
+        }
     });
 
     conn.ev.on('connection.update', async (update) => {
@@ -85,15 +86,18 @@ async function startBot() {
         
         if (connection === 'close') {
             let reason = lastDisconnect.error?.output?.statusCode;
-            if (reason !== DisconnectReason.loggedOut) {
-                console.log('🔄 Connection closed, reconnecting...');
-                startBot();
-            } else {
+            console.log(`⚠️ Connection Closed. Reason: ${reason}`);
+            
+            if (reason === DisconnectReason.loggedOut) {
                 console.log('❌ Logged out! Please delete auth_info folder, get a new SESSION_ID and restart.');
                 fs.rmSync('./auth_info', { recursive: true, force: true });
+                process.exit(1);
+            } else {
+                console.log('🔄 Reconnecting in 3 seconds...');
+                setTimeout(startBot, 3000); // 🔥 Loop එක නවත්වන්න තත්පර 3ක delay එකක්
             }
         } else if (connection === 'open') {
-            console.log('✅ Bot Connected to WhatsApp!');
+            console.log('✅ Bot Connected to WhatsApp Successfully!');
         }
     });
 
@@ -106,7 +110,6 @@ async function startBot() {
         if (!msg.message) return;
 
         try {
-            // Fix parameter order issue safely
             let mek;
             try { mek = await serialize(msg, conn); } catch(e) {}
             if (!mek) { try { mek = await serialize(conn, msg); } catch(e) {} }
@@ -120,22 +123,14 @@ async function startBot() {
             const text = args.join(' ');
             const from = mek.from;
 
-            // React function override
             mek.react = async (emoji) => {
-                await conn.sendMessage(from, { react: { text: emoji, key: msg.key } });
-            };
-
-            // Download override (if needed for stickers etc)
-            mek.download = async () => {
-                const { downloadMediaMessage } = require('@whiskeysockets/baileys');
-                return await downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }) });
+                try { await conn.sendMessage(from, { react: { text: emoji, key: msg.key } }); } catch(e) {}
             };
 
             if (isCmd) {
                 console.log(`\n💬 Command Received: ${command}`);
                 const cmd = handler.findCommand(command);
                 if (cmd) {
-                    // Check if Owner only command
                     if (cmd.isOwner && !config.isOwner(mek.sender)) {
                         return await conn.sendMessage(from, { text: '❌ This command is for the owner only.' }, { quoted: msg });
                     }
@@ -145,14 +140,16 @@ async function startBot() {
                         text, args, body, command, from, q: text
                     });
                     console.log(`✅ Command '${command}' Executed!`);
-                } else {
-                    console.log(`⚠️ Command '${command}' not found!`);
                 }
             }
         } catch (e) {
-            console.error('❌ General Message Error:', e);
+            console.error('❌ Message Error:', e);
         }
     });
 }
 
+// Initialize Database & Start Bot
+if (config.MONGODB) {
+    connectDB().catch(err => console.error("DB Error:", err));
+}
 startBot();
