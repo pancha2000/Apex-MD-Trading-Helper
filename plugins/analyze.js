@@ -2,9 +2,8 @@ const { cmd } = require('../lib/commands');
 const config = require('../config');
 const axios = require('axios');
 
-// Gemini API direct call (no package needed)
 async function callGemini(prompt) {
-    const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${config.GEMINI_API}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${config.GEMINI_API}`;
     const response = await axios.post(url, {
         contents: [{ parts: [{ text: prompt }] }]
     });
@@ -21,12 +20,8 @@ cmd({
 },
 async (conn, mek, m, { reply, text, args }) => {
     try {
-        if (!text) {
-            return await reply('❌ කරුණාකර Coin එකක් ලබා දෙන්න!\n\n*උදාහරණ:* .analyze BTC');
-        }
-        if (!config.GEMINI_API) {
-            return await reply('❌ GEMINI_API key එක config.env ෆයිල් එකේ නැහැ!');
-        }
+        if (!text) return await reply('❌ කරුණාකර Coin එකක් ලබා දෙන්න!\n\n*උදාහරණ:* .analyze BTC');
+        if (!config.GEMINI_API) return await reply('❌ GEMINI_API key එක config.env ෆයිල් එකේ නැහැ!');
 
         await m.react('⏳');
         await reply('⏳ *Binance දත්ත ලබා ගනිමින් සහ AI හරහා විශ්ලේෂණය කරමින් පවතී...*');
@@ -34,7 +29,6 @@ async (conn, mek, m, { reply, text, args }) => {
         let coin = args[0].toUpperCase();
         if (!coin.endsWith('USDT')) coin += 'USDT';
 
-        // Binance data
         const binanceUrl = `https://api.binance.com/api/v3/ticker/24hr?symbol=${coin}`;
         const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(binanceUrl)}`;
         const res = await axios.get(proxyUrl);
@@ -62,7 +56,7 @@ async (conn, mek, m, { reply, text, args }) => {
 
         const aiResponse = await callGemini(prompt);
 
-        const outMsg = `
+        await reply(`
 ╔═══════════════════════════╗
 ║   📈 *CRYPTO AI ANALYSIS* ║
 ╚═══════════════════════════╝
@@ -77,18 +71,15 @@ async (conn, mek, m, { reply, text, args }) => {
 ${aiResponse}
 
 > _Powered by Apex-MD-Trading-Helper_
-`;
-        await reply(outMsg);
+`);
         await m.react('✅');
 
     } catch (e) {
         await m.react('❌');
-        if (e.response?.data?.error?.message) {
-            await reply('❌ Gemini Error: ' + e.response.data.error.message);
-        } else if (e.response?.status === 404) {
+        if (e.response?.status === 404) {
             await reply(`❌ '${text}' යනු වලංගු Coin එකක් නොවේ. BTC, ETH, SOL වැනි නිවැරදි නමක් ලබා දෙන්න.`);
         } else {
-            await reply('❌ Error: ' + (e.message || e.toString()));
+            await reply('❌ Error: ' + (e.response?.data?.error?.message || e.message));
         }
     }
 });
