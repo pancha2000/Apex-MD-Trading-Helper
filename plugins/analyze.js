@@ -5,7 +5,7 @@ const axios = require('axios');
 cmd({
     pattern: "analyze",
     alias: ["crypto", "market", "trade"],
-    desc: "Analyze crypto market properly",
+    desc: "Analyze crypto market properly using Binance & Gemini AI",
     category: "crypto",
     react: "📈",
     filename: __filename
@@ -54,8 +54,8 @@ async (conn, mek, m, { reply, text, args }) => {
         Keep it clear, concise, and use emojis. 
         IMPORTANT: Reply ONLY in Sinhala language. Add a disclaimer that this is not financial advice.`;
 
-        // 3. කිසිම Proxy එකක් නොමැතිව කෙලින්ම නිල Google Gemini API එකට Request එක යැවීම (US Server එකක් නිසා Block වෙන්නේ නැත)
-        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${config.GEMINI_API}`;
+        // 3. Gemini API වෙත Request එක යැවීම (v1 API සහ gemini-1.5-flash-latest Model එක භාවිතා කර ඇත)
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash-latest:generateContent?key=${config.GEMINI_API}`;
         
         const aiPayload = {
             contents: [{ parts: [{ text: prompt }] }]
@@ -90,7 +90,8 @@ ${aiResponse}
     } catch (e) {
         await m.react('❌');
         
-        if (e.response && e.response.status === 404 && e.config.url.includes('allorigins')) {
+        // Error handling
+        if (e.response && e.response.status === 404 && e.config && e.config.url.includes('allorigins')) {
             await reply(`❌ '${text}' යනු වලංගු Coin එකක් නොවේ. කරුණාකර BTC, ETH, SOL වැනි නිවැරදි නමක් ලබා දෙන්න.`);
         } else {
             const errorMsg = e.response?.data?.error?.message || e.message;
@@ -98,4 +99,3 @@ ${aiResponse}
         }
     }
 });
-
