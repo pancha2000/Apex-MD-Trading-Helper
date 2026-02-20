@@ -2,99 +2,156 @@ const { cmd } = require('../lib/commands');
 const config = require('../config');
 const axios = require('axios');
 
+// --- BINANCE KLINE (CANDLESTICK) API HELPER FUNCTION ---
+async function getKlineData(coin, timeframe) {
+    const url = `https://api.binance.com/api/v3/klines?symbol=${coin}&interval=${timeframe}&limit=5`;
+    const res = await axios.get(url, {
+        headers: { 'X-MBX-APIKEY': config.BINANCE_API }
+    });
+    return res.data;
+}
+
+function formatCandles(candles) {
+    return candles.map((c, i) => `Candle ${i + 1}: Open=$${parseFloat(c[1]).toFixed(2)}, High=$${parseFloat(c[2]).toFixed(2)}, Low=$${parseFloat(c[3]).toFixed(2)}, Close=$${parseFloat(c[4]).toFixed(2)}, Vol=${parseFloat(c[5]).toFixed(2)}`).join('\n');
+}
+
+// ================== SPOT TRADING COMMAND ==================
 cmd({
-    pattern: "analyze",
-    alias: ["crypto", "market", "trade"],
-    desc: "Analyze crypto market using Official Binance API & Groq AI",
+    pattern: "spot",
+    desc: "Spot Trading Analysis using Groq AI",
     category: "crypto",
-    react: "📈",
+    react: "🟢",
     filename: __filename
 },
-async (conn, mek, m, { reply, text, args }) => {
+async (conn, mek, m, { reply, args }) => {
     try {
-        if (!text) return await reply('❌ කරුණාකර Coin එකක් ලබා දෙන්න!\n\n*උදාහරණ:* .analyze BTC');
+        if (!args[0]) return await reply(`❌ කරුණාකර Coin එකක් ලබා දෙන්න!\n\n*උදා:* ${config.PREFIX}spot BTC 4h`);
         if (!config.GROQ_API) return await reply('❌ GROQ_API key එක config.env ෆයිල් එකේ නැහැ!');
-        if (!config.BINANCE_API) return await reply('❌ BINANCE_API key එක config.env ෆයිල් එකේ නැහැ!');
-
-        await m.react('⏳');
-        await reply('⏳ *Binance දත්ත ලබා ගනිමින් සහ Llama 3.3 AI හරහා විශ්ලේෂණය කරමින් පවතී...*');
-
+        
         let coin = args[0].toUpperCase();
         if (!coin.endsWith('USDT')) coin += 'USDT';
+        
+        let timeframe = args[1] ? args[1].toLowerCase() : '1d'; 
 
-        // 1. Direct Binance API Call
-        const binanceUrl = `https://api.binance.com/api/v3/ticker/24hr?symbol=${coin}`;
-        const res = await axios.get(binanceUrl, {
-            headers: {
-                'Content-Type': 'application/json',
-                'X-MBX-APIKEY': config.BINANCE_API
-            }
-        });
-        const data = res.data;
+        await m.react('⏳');
+        await reply(`⏳ *Binance (${timeframe}) දත්ත ලබා ගනිමින් Spot Analysis සිදුකරමින් පවතී...*`);
 
-        const price = parseFloat(data.lastPrice).toFixed(2);
-        const change = parseFloat(data.priceChangePercent).toFixed(2);
-        const high = parseFloat(data.highPrice).toFixed(2);
-        const low = parseFloat(data.lowPrice).toFixed(2);
-        const vol = parseFloat(data.volume).toFixed(2);
+        const candles = await getKlineData(coin, timeframe);
+        const candleText = formatCandles(candles);
+        const currentPrice = parseFloat(candles[4][4]).toFixed(2); 
 
-        // 2. AI Prompt
-        const prompt = `You are an expert crypto trading analyst. Analyze the following 24-hour market data for ${coin} from Binance:
-        - Current Price: $${price}
-        - 24h Price Change: ${change}%
-        - 24h High: $${high}
-        - 24h Low: $${low}
-        - 24h Volume: ${vol}
+        const prompt = `You are an expert Crypto Spot Trader. Analyze the following last 5 candlestick data for ${coin} on a ${timeframe} timeframe from Binance:
+        
+        ${candleText}
+        Current Price: $${currentPrice}
 
-        Please provide a short, highly professional market analysis for day trading. Include:
-        1. Current Market Trend (Bullish/Bearish/Neutral)
-        2. Key Support & Resistance levels (estimate based on high/low)
-        3. A short trading advice/strategy.
-        Keep it clear, concise, and use emojis.
+        This is for SPOT TRADING. Please provide a highly professional analysis focusing on:
+        1. Overall Trend (in this timeframe)
+        2. Best DCA (Dollar Cost Averaging) / Spot Buy Zones
+        3. Major Support and Resistance levels
+        4. Long-term hold viability & Risk management.
+        
+        Keep it clear, concise, and use emojis. 
         IMPORTANT: Reply ONLY in Sinhala language. Add a disclaimer that this is not financial advice.`;
 
-        // 3. Groq API Call (Llama 3.3 අලුත්ම මොඩල් එක)
         const groqUrl = 'https://api.groq.com/openai/v1/chat/completions';
-        const aiPayload = {
-            model: "llama-3.3-70b-versatile", // 👈 මෙන්න මේ නම තමයි අලුත් කළේ
+        const aiRes = await axios.post(groqUrl, {
+            model: "llama-3.3-70b-versatile",
             messages: [{ role: "user", content: prompt }]
-        };
-
-        const aiRes = await axios.post(groqUrl, aiPayload, {
-            headers: {
-                'Authorization': `Bearer ${config.GROQ_API}`,
-                'Content-Type': 'application/json'
-            }
+        }, {
+            headers: { 'Authorization': `Bearer ${config.GROQ_API}`, 'Content-Type': 'application/json' }
         });
 
         const aiResponse = aiRes.data.choices[0].message.content;
 
-        // 4. Output Message
         const outMsg = `
 ╔═══════════════════════════╗
-║   📈 *CRYPTO AI ANALYSIS* ║
+║  🟢 *SPOT TRADE ANALYSIS* ║
 ╚═══════════════════════════╝
-
 🪙 *Coin:* ${coin.replace('USDT', '')}
-💲 *Current Price:* $${price}
-📊 *24h Change:* ${change > 0 ? '🟢 +' : '🔴 '}${change}%
-⬆️ *24h High:* $${high}
-⬇️ *24h Low:* $${low}
+⏱️ *Timeframe:* ${timeframe}
+💲 *Current Price:* $${currentPrice}
 
-🤖 *AI Market Analysis:*
 ${aiResponse}
 
-> _Powered by Apex-MD-Trading-Helper_
-`;
+> _APEX-MD Spot AI_`;
+        
         await reply(outMsg);
         await m.react('✅');
 
     } catch (e) {
         await m.react('❌');
-        if (e.response && e.response.status === 400 && e.config && e.config.url.includes('binance')) {
-            await reply(`❌ '${text}' යනු වලංගු Coin එකක් නොවේ. BTC, ETH, SOL වැනි නිවැරදි නමක් ලබා දෙන්න.`);
-        } else {
-            await reply('❌ Error: ' + (e.response?.data?.error?.message || e.message));
-        }
+        await reply('❌ Error: ' + (e.response?.data?.msg || e.response?.data?.error?.message || e.message));
+    }
+});
+
+// ================== FUTURES TRADING COMMAND ==================
+cmd({
+    pattern: "future",
+    alias: ["futures"],
+    desc: "Futures Trading Analysis using Groq AI",
+    category: "crypto",
+    react: "🔴",
+    filename: __filename
+},
+async (conn, mek, m, { reply, args }) => {
+    try {
+        if (!args[0]) return await reply(`❌ කරුණාකර Coin එකක් ලබා දෙන්න!\n\n*උදා:* ${config.PREFIX}future BTC 15m`);
+        if (!config.GROQ_API) return await reply('❌ GROQ_API key එක config.env ෆයිල් එකේ නැහැ!');
+        
+        let coin = args[0].toUpperCase();
+        if (!coin.endsWith('USDT')) coin += 'USDT';
+        
+        let timeframe = args[1] ? args[1].toLowerCase() : '15m'; 
+
+        await m.react('⏳');
+        await reply(`⏳ *Binance (${timeframe}) දත්ත ලබා ගනිමින් Futures Analysis සිදුකරමින් පවතී...*`);
+
+        const candles = await getKlineData(coin, timeframe);
+        const candleText = formatCandles(candles);
+        const currentPrice = parseFloat(candles[4][4]).toFixed(2);
+
+        const prompt = `You are an expert Crypto Futures Trader & Scalper. Analyze the following last 5 candlestick data for ${coin} on a ${timeframe} timeframe from Binance:
+        
+        ${candleText}
+        Current Price: $${currentPrice}
+
+        This is for FUTURES TRADING. Please provide a highly professional analysis focusing on:
+        1. Current Market Trend & Momentum (in this timeframe)
+        2. Best Entry Points for Long (Buy) and Short (Sell)
+        3. Strict Stop-Loss (SL) and Take-Profit (TP) targets
+        4. Leverage advice and Liquidation risks.
+        
+        Keep it clear, concise, and use emojis. 
+        IMPORTANT: Reply ONLY in Sinhala language. Add a disclaimer that this is not financial advice.`;
+
+        const groqUrl = 'https://api.groq.com/openai/v1/chat/completions';
+        const aiRes = await axios.post(groqUrl, {
+            model: "llama-3.3-70b-versatile",
+            messages: [{ role: "user", content: prompt }]
+        }, {
+            headers: { 'Authorization': `Bearer ${config.GROQ_API}`, 'Content-Type': 'application/json' }
+        });
+
+        const aiResponse = aiRes.data.choices[0].message.content;
+
+        const outMsg = `
+╔═══════════════════════════╗
+║ 🔴 *FUTURES TRADE ANALYSIS* ║
+╚═══════════════════════════╝
+🪙 *Coin:* ${coin.replace('USDT', '')}
+⏱️ *Timeframe:* ${timeframe}
+💲 *Current Price:* $${currentPrice}
+
+${aiResponse}
+
+> _APEX-MD Futures AI_`;
+        
+        await reply(outMsg);
+        await m.react('✅');
+
+    } catch (e) {
+        await m.react('❌');
+        await reply('❌ Error: ' + (e.response?.data?.msg || e.response?.data?.error?.message || e.message));
     }
 });

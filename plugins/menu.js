@@ -25,7 +25,17 @@ async (conn, mek, m, { reply }) => {
 │ ◦ *Owner:* ${config.OWNER_NAME}
 │ ◦ *Prefix:* [ ${config.PREFIX} ]
 │ ◦ *Uptime:* ${uptime}
-╰─────────────────\n\n`;
+╰─────────────────
+
+📊 *CRYPTO TRADING GUIDE* 📊
+ඔබට අවශ්‍ය Trading වර්ගය සහ Timeframe එක (15m, 1h, 4h, 1d) පහත පරිදි ලබා දෙන්න:
+
+🟢 *Spot Trading සඳහා:* ${config.PREFIX}spot <coin> <timeframe>
+(උදා: ${config.PREFIX}spot BTC 4h)
+
+🔴 *Futures Trading සඳහා:* ${config.PREFIX}future <coin> <timeframe>
+(උදා: ${config.PREFIX}future ETH 15m)
+──────────────────\n\n`;
         
         // Commands by category
         categories.forEach(cat => {
