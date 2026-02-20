@@ -5,7 +5,7 @@ const axios = require('axios');
 cmd({
     pattern: "analyze",
     alias: ["crypto", "market", "trade"],
-    desc: "Analyze crypto market using Official Binance API & AI",
+    desc: "Analyze crypto market using Binance US API & AI",
     category: "crypto",
     react: "📈",
     filename: __filename
@@ -19,10 +19,6 @@ async (conn, mek, m, { reply, text, args }) => {
         if (!config.GEMINI_API) {
             return await reply('❌ GEMINI_API key එක config.env ෆයිල් එකේ නැහැ!');
         }
-        
-        if (!config.BINANCE_API) {
-            return await reply('❌ BINANCE_API key එක config.env ෆයිල් එකේ නැහැ! කරුණාකර එය ඇතුළත් කරන්න.');
-        }
 
         await m.react('⏳');
         await reply('⏳ *Binance දත්ත ලබා ගනිමින් සහ AI හරහා විශ්ලේෂණය කරමින් පවතී...*');
@@ -30,16 +26,11 @@ async (conn, mek, m, { reply, text, args }) => {
         let coin = args[0].toUpperCase();
         if(!coin.endsWith('USDT')) coin += 'USDT';
 
-        // 1. Config එකෙන් Binance API Key එක අරගෙන Request එක යැවීම
-        const binanceUrl = `https://api.binance.com/api/v3/ticker/24hr?symbol=${coin}`;
+        // 1. Binance US API භාවිතය (ඇමරිකානු සර්වර් වලට 100% ක් වැඩ කරන නිල සේවාව)
+        // Public Data නිසා API Key අවශ්‍ය නැත. 403 හෝ 451 Errors එන්නේ නැත!
+        const binanceUrl = `https://api.binance.us/api/v3/ticker/24hr?symbol=${coin}`;
         
-        const res = await axios.get(binanceUrl, { 
-            headers: { 
-                'Content-Type': 'application/json',
-                'X-MBX-APIKEY': config.BINANCE_API // 👈 මෙතනින් තමයි Key එක Call වෙන්නේ
-            } 
-        });
-        
+        const res = await axios.get(binanceUrl);
         const data = res.data;
 
         const price = parseFloat(data.lastPrice).toFixed(2);
@@ -48,7 +39,7 @@ async (conn, mek, m, { reply, text, args }) => {
         const low = parseFloat(data.lowPrice).toFixed(2);
         const vol = parseFloat(data.volume).toFixed(2);
 
-        // 2. AI එක සඳහා Prompt එක සැකසීම
+        // 2. AI Prompt
         const prompt = `You are an expert crypto trading analyst. Analyze the following 24-hour market data for ${coin} from Binance:
         - Current Price: $${price}
         - 24h Price Change: ${change}%
@@ -63,7 +54,7 @@ async (conn, mek, m, { reply, text, args }) => {
         Keep it clear, concise, and use emojis. 
         IMPORTANT: Reply ONLY in Sinhala language. Add a disclaimer that this is not financial advice.`;
 
-        // 3. Cloudflare Private Proxy හරහා Gemini API වෙත Request එක යැවීම
+        // 3. ඔයාගේ Cloudflare Proxy හරහා Gemini API වෙත Request යැවීම
         const proxyUrl = `https://patient-band-7ce9.cdilrukshi52.workers.dev/v1beta/models/gemini-1.5-flash:generateContent?key=${config.GEMINI_API}`;
         
         const aiPayload = {
@@ -76,7 +67,7 @@ async (conn, mek, m, { reply, text, args }) => {
 
         const aiResponse = aiRes.data.candidates[0].content.parts[0].text;
 
-        // 4. WhatsApp Message එක Format කිරීම
+        // 4. WhatsApp Message
         const outMsg = `
 ╔═══════════════════════════╗
 ║   📈 *CRYPTO AI ANALYSIS* ║
@@ -98,12 +89,15 @@ ${aiResponse}
 
     } catch (e) {
         await m.react('❌');
-        const errorMsg = e.response?.data?.msg || e.response?.data?.error?.message || e.message;
         
         if (e.response && e.response.status === 400 && !e.response.config.url.includes('workers.dev')) {
-            await reply(`❌ '${text}' යනු වලංගු Coin එකක් නොවේ. කරුණාකර BTC, ETH, SOL වැනි නිවැරදි නමක් ලබා දෙන්න.`);
+            await reply(`❌ '${text}' යනු වලංගු Coin එකක් නොවේ.`);
+        } else if (e.response && e.response.status === 404 && e.response.config.url.includes('binance.us')) {
+            await reply(`❌ '${text}' Coin එක Binance US හි ලැයිස්තුගත කර නොමැත. කරුණාකර BTC, ETH, SOL වැනි ප්‍රධාන Coin එකක් ලබා දෙන්න.`);
         } else {
+            const errorMsg = e.response?.data?.msg || e.response?.data?.error?.message || e.message;
             await reply('❌ Error: ' + errorMsg);
         }
     }
 });
+
