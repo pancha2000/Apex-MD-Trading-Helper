@@ -26,7 +26,7 @@ async (conn, mek, m, { reply, args }) => {
         let timeframe = args[1] ? args[1].toLowerCase() : '1d'; 
 
         await m.react('⏳');
-        await reply(`⏳ *Advanced AI විශ්ලේෂණය ආරම්භ කෙරේ... (මෙයට තත්පර කිහිපයක් ගතවිය හැක)*`);
+        await reply(`⏳ *Advanced AI විශ්ලේෂණය ආරම්භ කෙරේ...*`);
 
         // දත්ත ලබාගැනීම
         const currentCandles = await binance.getKlineData(coin, timeframe);
@@ -50,7 +50,6 @@ async (conn, mek, m, { reply, args }) => {
         const poc = indicators.calculatePOC(currentCandles);
         const marketSMC = smc.analyzeSMC(currentCandles);
 
-        // Spot සඳහා JSON Prompt එක
         const prompt = `You are a Master Institutional Crypto Spot Trader. Analyze ${coin} for SPOT TRADING.
         Current Price: $${currentPrice}
         
@@ -60,6 +59,10 @@ async (conn, mek, m, { reply, args }) => {
         - Order Flow: Bids=$${orderBook.totalBids}, Asks=$${orderBook.totalAsks} | POC=$${poc}
         - TA: RSI=${rsi} | ATR=${atr} | Pattern=${candlePattern} | Divergence=${divergence}
         - SMC: Res=$${marketSMC.resistance} | Sup=$${marketSMC.support} | Fib 0.618=$${marketSMC.fib618}
+
+        CRITICAL LANGUAGE RULES:
+        1. Write the explanation STRICTLY in proper Sinhala script (සිංහල අකුරෙන්). Do NOT use Singlish.
+        2. DO NOT translate technical trading terms. Keep terms like Trend, Momentum, Support, Resistance, Bullish, Bearish, FVG, Order Book, Long, Short EXACTLY in English.
 
         You MUST respond ONLY with a valid JSON object. Do not add markdown blocks.
         Format strictly like this:
@@ -71,9 +74,9 @@ async (conn, mek, m, { reply, args }) => {
           "sl": "precise number using ATR",
           "allocation": "e.g., 5% to 10%",
           "confidence": "e.g., 85%",
-          "trend": "Short Sinhala sentence explaining MTF and EMA trend.",
-          "sentiment": "Short Sinhala sentence explaining F&G, Orderbook, and News.",
-          "momentum": "Short Sinhala sentence explaining RSI, Pattern, and Divergence."
+          "trend": "Short Sinhala sentence explaining MTF and EMA trend (Keep trading words in English).",
+          "sentiment": "Short Sinhala sentence explaining F&G, Orderbook, and News (Keep trading words in English).",
+          "momentum": "Short Sinhala sentence explaining RSI, Pattern, and Divergence (Keep trading words in English)."
         }`;
 
         const groqUrl = 'https://api.groq.com/openai/v1/chat/completions';
@@ -84,7 +87,6 @@ async (conn, mek, m, { reply, args }) => {
 
         let aiResponse = aiRes.data.choices[0].message.content;
         
-        // JSON එක නිවැරදිව වෙන් කරගැනීම
         let jsonMatch = aiResponse.match(/\{[\s\S]*\}/);
         if (!jsonMatch) throw new Error("AI Format Error");
         let data = JSON.parse(jsonMatch[0]);
@@ -148,7 +150,7 @@ async (conn, mek, m, { reply, args }) => {
         let timeframe = args[1] ? args[1].toLowerCase() : '15m'; 
 
         await m.react('⏳');
-        await reply(`⏳ *Advanced AI විශ්ලේෂණය ආරම්භ කෙරේ... (මෙයට තත්පර කිහිපයක් ගතවිය හැක)*`);
+        await reply(`⏳ *Advanced AI විශ්ලේෂණය ආරම්භ කෙරේ...*`);
 
         // දත්ත ලබාගැනීම
         const currentCandles = await binance.getKlineData(coin, timeframe);
@@ -173,7 +175,6 @@ async (conn, mek, m, { reply, args }) => {
         const poc = indicators.calculatePOC(currentCandles);
         const marketSMC = smc.analyzeSMC(currentCandles);
 
-        // Future සඳහා JSON Prompt එක
         const prompt = `You are a Master Institutional Crypto AI. Analyze ${coin} for FUTURES TRADING.
         Current Price: $${currentPrice}
         
@@ -184,6 +185,10 @@ async (conn, mek, m, { reply, args }) => {
         - Derivatives: Funding Rate=${futuresData.fundingRate} | OI=${futuresData.openInterest}
         - TA: RSI=${rsi} | ATR=${atr} | Pattern=${candlePattern} | Divergence=${divergence}
         - SMC: Res=$${marketSMC.resistance} | Sup=$${marketSMC.support} | Fib 0.618=$${marketSMC.fib618}
+
+        CRITICAL LANGUAGE RULES:
+        1. Write the explanation STRICTLY in proper Sinhala script (සිංහල අකුරෙන්). Do NOT use Singlish.
+        2. DO NOT translate technical trading terms. Keep terms like Trend, Momentum, Support, Resistance, Bullish, Bearish, FVG, Order Book, Long, Short EXACTLY in English.
 
         You MUST respond ONLY with a valid JSON object. Do not add markdown blocks.
         Format strictly like this:
@@ -196,9 +201,9 @@ async (conn, mek, m, { reply, args }) => {
           "leverage": "e.g., 5x (Isolated)",
           "margin": "e.g., 3%",
           "confidence": "e.g., 85%",
-          "trend": "Short Sinhala sentence explaining MTF and EMA trend.",
-          "sentiment": "Short Sinhala sentence explaining F&G, Orderbook, and News.",
-          "momentum": "Short Sinhala sentence explaining RSI, Pattern, and Divergence."
+          "trend": "Short Sinhala sentence explaining MTF and EMA trend (Keep trading words in English).",
+          "sentiment": "Short Sinhala sentence explaining F&G, Orderbook, and News (Keep trading words in English).",
+          "momentum": "Short Sinhala sentence explaining RSI, Pattern, and Divergence (Keep trading words in English)."
         }`;
 
         const groqUrl = 'https://api.groq.com/openai/v1/chat/completions';
@@ -209,7 +214,6 @@ async (conn, mek, m, { reply, args }) => {
 
         let aiResponse = aiRes.data.choices[0].message.content;
         
-        // JSON එක නිවැරදිව වෙන් කරගැනීම
         let jsonMatch = aiResponse.match(/\{[\s\S]*\}/);
         if (!jsonMatch) throw new Error("AI Format Error");
         let data = JSON.parse(jsonMatch[0]);
