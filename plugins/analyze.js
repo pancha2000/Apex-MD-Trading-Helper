@@ -3,27 +3,22 @@ const config = require('../config');
 const axios = require('axios');
 const db = require('../lib/database');
 
-// අලුතින් වෙන් කළ Modules (Modular Architecture)
+// Modular Architecture Imports
 const binance = require('../lib/binance');
 const indicators = require('../lib/indicators');
 const smc = require('../lib/smartmoney');
 
-function formatRecentCandles(candles) {
-    const recent = candles.slice(-10);
-    return recent.map((c, i) => `C${i + 1}: O=$${parseFloat(c[1]).toFixed(2)}, H=$${parseFloat(c[2]).toFixed(2)}, L=$${parseFloat(c[3]).toFixed(2)}, C=$${parseFloat(c[4]).toFixed(2)}`).join('\n');
-}
-
-// ================== SPOT COMMAND ==================
+// ================== SPOT COMMAND (ULTIMATE) ==================
 cmd({
     pattern: "spot",
-    desc: "Advanced Spot Trading Analysis with ATR & Fib",
+    desc: "Ultimate Spot AI with MTF, Divergence & Risk Management",
     category: "crypto",
     react: "🟢",
     filename: __filename
 },
 async (conn, mek, m, { reply, args }) => {
     try {
-        if (!args[0]) return await reply(`❌ කරුණාකර Coin එකක් ලබා දෙන්න!\n*උදා:* ${config.PREFIX}spot BTC 4h`);
+        if (!args[0]) return await reply(`❌ කරුණාකර Coin එකක් ලබා දෙන්න!\n*උදා:* ${config.PREFIX}spot BTC 1d`);
         if (!config.GROQ_API) return await reply('❌ GROQ_API key එක නැහැ!');
         
         let coin = args[0].toUpperCase();
@@ -31,35 +26,50 @@ async (conn, mek, m, { reply, args }) => {
         let timeframe = args[1] ? args[1].toLowerCase() : '1d'; 
 
         await m.react('⏳');
-        await reply(`⏳ *Binance (${timeframe}) දත්ත විශ්ලේෂණය කරමින් පවතී...*`);
+        await reply(`⏳ *Binance (${timeframe} + Macro TFs) Timeframes විශ්ලේෂණය කරමින් පවතී...*`);
 
-        // Modules හරහා දත්ත ලබාගැනීම
-        const candles = await binance.getKlineData(coin, timeframe);
-        const currentPrice = parseFloat(candles[candles.length - 1][4]).toFixed(2); 
+        // MTF Data Fetching
+        const currentCandles = await binance.getKlineData(coin, timeframe);
+        const tf4hCandles = await binance.getKlineData(coin, '4h', 60);
+        const tf1dCandles = await binance.getKlineData(coin, '1d', 60);
+
+        const currentPrice = parseFloat(currentCandles[currentCandles.length - 1][4]).toFixed(2);
         
-        const rsi = indicators.calculateRSI(candles);
-        const ema = indicators.calculateEMA(candles);
-        const atr = indicators.calculateATR(candles); // 👈 අලුත් ATR එක
+        const rsi = indicators.calculateRSI(currentCandles);
+        const emaCurrent = indicators.calculateEMA(currentCandles);
+        const ema4H = indicators.calculateEMA(tf4hCandles);
+        const ema1D = indicators.calculateEMA(tf1dCandles);
         
-        const marketSMC = smc.analyzeSMC(candles); // 👈 මේක ඇතුළේ දැන් Fib තියෙනවා
+        const atr = indicators.calculateATR(currentCandles);
+        const divergence = indicators.checkDivergence(currentCandles);
+        const marketSMC = smc.analyzeSMC(currentCandles);
 
-        const prompt = `Analyze ${coin} on ${timeframe} for SPOT TRADING.
-        Current Price: $${currentPrice}, RSI: ${rsi}, EMA(50): ${ema}
-        ATR (Volatility): ${atr}
-        Resistance: $${marketSMC.resistance}, Support: $${marketSMC.support}
-        Bullish FVG: ${marketSMC.bullishFVG}, Bearish FVG: ${marketSMC.bearishFVG}
-        Fibonacci Golden Zone: $${marketSMC.fib618} - $${marketSMC.fib786}
+        const prompt = `You are a Master Institutional Crypto Spot Trader. Analyze ${coin} for SPOT TRADING.
+        Current Price: $${currentPrice}
+        
+        [MULTI-TIMEFRAME ANALYSIS]
+        - Entry TF (${timeframe}) EMA(50): $${emaCurrent}
+        - Medium TF (4H) EMA(50): $${ema4H}
+        - Macro TF (1D) EMA(50): $${ema1D}
 
-        Provide a VERY SHORT analysis using Sinhala mixed with English trading terms.
+        [INDICATORS & SMC]
+        - RSI: ${rsi} | Divergence: ${divergence}
+        - ATR (Volatility): ${atr}
+        - Resistance: $${marketSMC.resistance} | Support: $${marketSMC.support}
+        - Bullish FVG: ${marketSMC.bullishFVG} | Bearish FVG: ${marketSMC.bearishFVG}
+        - Fibonacci Golden Zone: $${marketSMC.fib618} - $${marketSMC.fib786}
+
+        Provide a HIGHLY PROFESSIONAL, short analysis using Sinhala mixed with English trading terms.
         Format strictly like this:
-        📌 Market Status: (Trend relative to EMA, Volatility based on ATR, and RSI status)
+        📌 MTF Trend: (Are timeframes aligned? Explain briefly)
+        📉 Momentum & Divergence: (Mention Divergence and RSI status)
         🤖 AI Decision: (BUY, HOLD, or WAIT)
-        🛡️ Confidence: (e.g., 85%) & Risk Level
+        🛡️ Confidence: (e.g., 90%)
         🎯 Spot Targets: 
-           - Entry Zone: (Use Fibonacci Golden Zone or Support for DCA accumulation)
-           - TP: (Target based on Resistance/FVG)
-           - SL: (Safe Stop Loss or Invalidated point)
-        💡 Spot Strategy: (Mention if it's safe to hold, or if they should wait for a drop to the Golden Pocket).
+           - Entry Zone: (Use Fib 0.618 or Support for DCA accumulation)
+           - TP: (Target based on Resistance)
+           - SL: (Safe Stop Loss or Invalidated point using ATR)
+        🧮 Portfolio Risk: (Suggest how much % of portfolio to allocate to this spot bag).
 
         IMPORTANT: At the very end, output exactly:
         [TARGETS|ENTRY:number|TP:number|SL:number]`;
@@ -74,26 +84,26 @@ async (conn, mek, m, { reply, args }) => {
 
         const outMsg = `
 ╔═══════════════════════════╗
-║  🟢 *SPOT TRADE ANALYSIS* ║
+║  🟢 *PRO SPOT ANALYSIS* ║
 ╚═══════════════════════════╝
 🪙 *Coin:* ${coin.replace('USDT', '')}
-⏱️ *Timeframe:* ${timeframe}
+⏱️ *Timeframe:* ${timeframe} (MTF Synced)
 💲 *Current Price:* $${currentPrice}
 
 ${aiResponse}
 
-> 📌 *මෙම Trade එක Track කිරීමට .track ලෙස Reply කරන්න.*`;
+> 📌 *Track කිරීමට .track ලෙස Reply කරන්න.*`;
         
         await reply(outMsg);
         await m.react('✅');
     } catch (e) { await reply('❌ Error: ' + e.message); }
 });
 
-// ================== FUTURES COMMAND ==================
+// ================== FUTURES COMMAND (ULTIMATE) ==================
 cmd({
     pattern: "future",
     alias: ["futures"],
-    desc: "Advanced Futures Trading Analysis with ATR & Fib",
+    desc: "Ultimate Futures AI with MTF, Divergence & Risk Management",
     category: "crypto",
     react: "🔴",
     filename: __filename
@@ -108,35 +118,50 @@ async (conn, mek, m, { reply, args }) => {
         let timeframe = args[1] ? args[1].toLowerCase() : '15m'; 
 
         await m.react('⏳');
-        await reply(`⏳ *Binance (${timeframe}) දත්ත විශ්ලේෂණය කරමින් පවතී...*`);
+        await reply(`⏳ *Binance (${timeframe}, 1h, 4h) Timeframes තුනම විශ්ලේෂණය කරමින් පවතී...*`);
 
-        // Modules හරහා දත්ත ලබාගැනීම
-        const candles = await binance.getKlineData(coin, timeframe);
-        const currentPrice = parseFloat(candles[candles.length - 1][4]).toFixed(2);
+        // MTF Data Fetching
+        const currentCandles = await binance.getKlineData(coin, timeframe);
+        const hourlyCandles = await binance.getKlineData(coin, '1h', 60); 
+        const macroCandles = await binance.getKlineData(coin, '4h', 60);  
+
+        const currentPrice = parseFloat(currentCandles[currentCandles.length - 1][4]).toFixed(2);
         
-        const rsi = indicators.calculateRSI(candles);
-        const ema = indicators.calculateEMA(candles);
-        const atr = indicators.calculateATR(candles); // 👈 අලුත් ATR එක
+        const rsi = indicators.calculateRSI(currentCandles);
+        const emaCurrent = indicators.calculateEMA(currentCandles);
+        const ema1H = indicators.calculateEMA(hourlyCandles);
+        const ema4H = indicators.calculateEMA(macroCandles);
         
-        const marketSMC = smc.analyzeSMC(candles); // 👈 මේක ඇතුළේ දැන් Fib තියෙනවා
+        const atr = indicators.calculateATR(currentCandles);
+        const divergence = indicators.checkDivergence(currentCandles);
+        const marketSMC = smc.analyzeSMC(currentCandles);
 
-        const prompt = `Analyze ${coin} on ${timeframe} for FUTURES TRADING.
-        Current Price: $${currentPrice}, RSI: ${rsi}, EMA(50): ${ema}
-        ATR (Volatility): ${atr}
-        Resistance: $${marketSMC.resistance}, Support: $${marketSMC.support}
-        Bullish FVG: ${marketSMC.bullishFVG}, Bearish FVG: ${marketSMC.bearishFVG}
-        Fibonacci Golden Zone: $${marketSMC.fib618} - $${marketSMC.fib786}
+        const prompt = `You are a Master Institutional Crypto Trader. Analyze ${coin} for FUTURES TRADING.
+        Current Price: $${currentPrice}
+        
+        [MULTI-TIMEFRAME ANALYSIS]
+        - Entry TF (${timeframe}) EMA(50): $${emaCurrent}
+        - Medium TF (1H) EMA(50): $${ema1H}
+        - Macro TF (4H) EMA(50): $${ema4H}
 
-        Provide a VERY SHORT analysis using Sinhala mixed with English trading terms.
+        [INDICATORS & SMC]
+        - RSI: ${rsi} | Divergence: ${divergence}
+        - ATR (Volatility): ${atr}
+        - Resistance: $${marketSMC.resistance} | Support: $${marketSMC.support}
+        - Bullish FVG: ${marketSMC.bullishFVG} | Bearish FVG: ${marketSMC.bearishFVG}
+        - Fibonacci Golden Zone: $${marketSMC.fib618} - $${marketSMC.fib786}
+
+        Provide a HIGHLY PROFESSIONAL, short analysis using Sinhala mixed with English trading terms.
         Format strictly like this:
-        📌 Market Status: (Trend relative to EMA, and RSI meaning)
+        📌 MTF Trend: (Are ${timeframe}, 1H, and 4H aligned? Explain briefly)
+        📉 Momentum & Divergence: (Mention if there is Divergence and what RSI shows)
         🤖 AI Decision: (LONG, SHORT, or WAIT)
-        🛡️ Confidence: (e.g., 85%) & Risk Level
+        🛡️ Confidence: (e.g., 90%)
         🎯 Trade Setup: 
-           - Entry: (Use Fibonacci Golden Zone or FVG for precise sniper entry)
-           - TP: (Target based on Support/Resistance)
-           - SL: (Calculate a safe Stop Loss using ATR to avoid Stop Hunts)
-        💡 Trade Management: (If moving towards SL, mention DCA at FVG/Support or early exit).
+           - Entry: (Use Fib 0.618 or FVG for precise entry)
+           - TP: (Target based on Resistance/Support)
+           - SL: (Safe Stop Loss using ATR)
+        🧮 Risk Management: (Suggest exactly how much margin % to use and maximum leverage based on ATR Volatility).
 
         IMPORTANT: At the very end, output exactly:
         [TARGETS|ENTRY:number|TP:number|SL:number]`;
@@ -151,15 +176,15 @@ async (conn, mek, m, { reply, args }) => {
 
         const outMsg = `
 ╔═══════════════════════════╗
-║ 🔴 *FUTURES TRADE ANALYSIS* ║
+║ 🔴 *PRO FUTURES ANALYSIS* ║
 ╚═══════════════════════════╝
 🪙 *Coin:* ${coin.replace('USDT', '')}
-⏱️ *Timeframe:* ${timeframe}
+⏱️ *Timeframe:* ${timeframe} (Synced with 1H & 4H)
 💲 *Current Price:* $${currentPrice}
 
 ${aiResponse}
 
-> 📌 *මෙම Trade එක Track කිරීමට .track ලෙස Reply කරන්න.*`;
+> 📌 *Track කිරීමට .track ලෙස Reply කරන්න.*`;
         
         await reply(outMsg);
         await m.react('✅');
