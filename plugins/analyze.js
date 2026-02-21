@@ -3,42 +3,10 @@ const config = require('../config');
 const axios = require('axios');
 const db = require('../lib/database');
 
-// ================== MARKET MATH & SMC FUNCTIONS ==================
-async function getKlineData(coin, timeframe) {
-    const url = `https://api.binance.com/api/v3/klines?symbol=${coin}&interval=${timeframe}&limit=100`;
-    const res = await axios.get(url, { headers: { 'X-MBX-APIKEY': config.BINANCE_API } });
-    return res.data;
-}
-
-function calculateRSI(candles, period = 14) {
-    let gains = 0, losses = 0;
-    for (let i = candles.length - period - 1; i < candles.length - 1; i++) {
-        let change = parseFloat(candles[i+1][4]) - parseFloat(candles[i][4]);
-        if (change > 0) gains += change;
-        else losses -= change;
-    }
-    let rs = (gains / period) / (losses / period || 1);
-    return (100 - (100 / (1 + rs))).toFixed(2);
-}
-
-function analyzeSMC(candles) {
-    let highs = candles.map(c => parseFloat(c[2]));
-    let lows = candles.map(c => parseFloat(c[3]));
-    
-    let resistance = Math.max(...highs).toFixed(2);
-    let support = Math.min(...lows).toFixed(2);
-
-    let bullishFVG = "None", bearishFVG = "None";
-    for (let i = candles.length - 20; i < candles.length - 1; i++) {
-        if (i < 2) continue;
-        let c1High = parseFloat(candles[i-2][2]), c3Low = parseFloat(candles[i][3]);
-        let c1Low = parseFloat(candles[i-2][3]), c3High = parseFloat(candles[i][2]);
-
-        if (c1High < c3Low) bullishFVG = `$${c1High.toFixed(2)} - $${c3Low.toFixed(2)}`;
-        if (c1Low > c3High) bearishFVG = `$${c3High.toFixed(2)} - $${c1Low.toFixed(2)}`;
-    }
-    return { support, resistance, bullishFVG, bearishFVG };
-}
+// අලුතින් වෙන් කළ Modules (Modular Architecture)
+const binance = require('../lib/binance');
+const indicators = require('../lib/indicators');
+const smc = require('../lib/smartmoney');
 
 function formatRecentCandles(candles) {
     const recent = candles.slice(-10);
@@ -65,24 +33,25 @@ async (conn, mek, m, { reply, args }) => {
         await m.react('⏳');
         await reply(`⏳ *Binance (${timeframe}) දත්ත විශ්ලේෂණය කරමින් පවතී...*`);
 
-        const candles = await getKlineData(coin, timeframe);
+        // Modules හරහා දත්ත ලබාගැනීම
+        const candles = await binance.getKlineData(coin, timeframe);
         const currentPrice = parseFloat(candles[candles.length - 1][4]).toFixed(2); 
-        const rsi = calculateRSI(candles);
-        const smc = analyzeSMC(candles);
+        const rsi = indicators.calculateRSI(candles);
+        const ema = indicators.calculateEMA(candles);
+        const marketSMC = smc.analyzeSMC(candles);
 
         const prompt = `Analyze ${coin} on ${timeframe} for SPOT TRADING.
-        Current Price: $${currentPrice}, RSI: ${rsi} (Overbought > 70, Oversold < 30)
-        Resistance: $${smc.resistance}, Support: $${smc.support}
-        Bullish FVG: ${smc.bullishFVG}, Bearish FVG: ${smc.bearishFVG}
+        Current Price: $${currentPrice}, RSI: ${rsi}, EMA(50): ${ema}
+        Resistance: $${marketSMC.resistance}, Support: $${marketSMC.support}
+        Bullish FVG: ${marketSMC.bullishFVG}, Bearish FVG: ${marketSMC.bearishFVG}
 
-        Provide a VERY SHORT, concise analysis using Sinhala mixed with English trading terms (e.g., Long, Short, DCA, SL, FVG, Confidence). No long paragraphs. Use bullet points.
-        
+        Provide a VERY SHORT analysis using Sinhala mixed with English trading terms.
         Format strictly like this:
-        📌 Market Status: (Briefly mention Trend, and what the RSI value means for the market)
+        📌 Market Status: (Trend, RSI, EMA status)
         🤖 AI Decision: (BUY/HOLD/WAIT)
         🛡️ Confidence: (e.g., 85%)
         🎯 Targets: Entry, TP, SL
-        💡 DCA Strategy: (If market drops towards SL, is there a strong Support/FVG to DCA and save the trade? If yes, state DCA point. If no, advise early exit or strict SL).
+        💡 DCA Strategy: (Explain based on Support/FVG)
 
         IMPORTANT: At the very end, output exactly:
         [TARGETS|ENTRY:number|TP:number|SL:number]`;
@@ -105,7 +74,7 @@ async (conn, mek, m, { reply, args }) => {
 
 ${aiResponse}
 
-> 📌 *මෙම Trade එක Track කිරීමට අවශ්‍ය නම්, මෙම පණිවිඩයට Reply කරමින් .track ලෙස යවන්න.*`;
+> 📌 *මෙම Trade එක Track කිරීමට .track ලෙස Reply කරන්න.*`;
         
         await reply(outMsg);
         await m.react('✅');
@@ -133,24 +102,25 @@ async (conn, mek, m, { reply, args }) => {
         await m.react('⏳');
         await reply(`⏳ *Binance (${timeframe}) දත්ත විශ්ලේෂණය කරමින් පවතී...*`);
 
-        const candles = await getKlineData(coin, timeframe);
+        // Modules හරහා දත්ත ලබාගැනීම
+        const candles = await binance.getKlineData(coin, timeframe);
         const currentPrice = parseFloat(candles[candles.length - 1][4]).toFixed(2);
-        const rsi = calculateRSI(candles);
-        const smc = analyzeSMC(candles);
+        const rsi = indicators.calculateRSI(candles);
+        const ema = indicators.calculateEMA(candles);
+        const marketSMC = smc.analyzeSMC(candles);
 
         const prompt = `Analyze ${coin} on ${timeframe} for FUTURES TRADING.
-        Current Price: $${currentPrice}, RSI: ${rsi} (Overbought > 70, Oversold < 30)
-        Resistance: $${smc.resistance}, Support: $${smc.support}
-        Bullish FVG: ${smc.bullishFVG}, Bearish FVG: ${smc.bearishFVG}
+        Current Price: $${currentPrice}, RSI: ${rsi}, EMA(50): ${ema}
+        Resistance: $${marketSMC.resistance}, Support: $${marketSMC.support}
+        Bullish FVG: ${marketSMC.bullishFVG}, Bearish FVG: ${marketSMC.bearishFVG}
 
-        Provide a VERY SHORT, concise analysis using Sinhala mixed with English trading terms (e.g., Long, Short, DCA, SL, FVG, Confidence). No long paragraphs. Use bullet points.
-        
+        Provide a VERY SHORT analysis using Sinhala mixed with English trading terms.
         Format strictly like this:
-        📌 Market Status: (Briefly mention Trend, and what the RSI value means for the market)
+        📌 Market Status: (Trend relative to EMA, and RSI meaning)
         🤖 AI Decision: (LONG, SHORT, or WAIT)
-        🛡️ Confidence: (e.g., 85%) & Risk Level (Low/Med/High)
+        🛡️ Confidence: (e.g., 85%) & Risk Level
         🎯 Trade Setup: Entry, TP, Strict SL
-        💡 Trade Management (DCA vs SL): (If the trade moves against us towards the SL, is there a strong FVG/Support to DCA safely? If yes, provide the DCA Level. If no strong support exists, explicitly advise to exit early or respect the strict SL without DCA).
+        💡 Trade Management (DCA vs SL): (If moving towards SL, mention DCA at FVG/Support or early exit).
 
         IMPORTANT: At the very end, output exactly:
         [TARGETS|ENTRY:number|TP:number|SL:number]`;
@@ -173,14 +143,14 @@ async (conn, mek, m, { reply, args }) => {
 
 ${aiResponse}
 
-> 📌 *මෙම Trade එක Track කිරීමට අවශ්‍ය නම්, මෙම පණිවිඩයට Reply කරමින් .track ලෙස යවන්න.*`;
+> 📌 *මෙම Trade එක Track කිරීමට .track ලෙස Reply කරන්න.*`;
         
         await reply(outMsg);
         await m.react('✅');
     } catch (e) { await reply('❌ Error: ' + e.message); }
 });
 
-// ================== TRACK COMMAND (අර කලින් එකමයි) ==================
+// ================== TRACK COMMAND ==================
 cmd({
     pattern: "track",
     desc: "Save and track a crypto trade",
