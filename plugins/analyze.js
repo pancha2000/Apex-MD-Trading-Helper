@@ -60,23 +60,28 @@ async (conn, mek, m, { reply, args }) => {
         - TA: RSI=${rsi} | ATR=${atr} | Pattern=${candlePattern} | Divergence=${divergence}
         - SMC: Res=$${marketSMC.resistance} | Sup=$${marketSMC.support} | Fib 0.618=$${marketSMC.fib618}
 
+        CRITICAL MATH RULES:
+        1. For "entry", "tp", and "sl" fields, perform the math calculation yourself and output ONLY the final decimal number.
+        2. DO NOT output formulas or equations like "67000 - 2*90". Output only the final result like "66820.50".
+
         CRITICAL LANGUAGE RULES:
-        1. Write the explanation STRICTLY in proper Sinhala script (සිංහල අකුරෙන්). Do NOT use Singlish.
-        2. DO NOT translate technical trading terms. Keep terms like Trend, Momentum, Support, Resistance, Bullish, Bearish, FVG, Order Book, Long, Short EXACTLY in English.
+        1. Write explanations STRICTLY using the Sinhala alphabet/script (සිංහල අකුරෙන්). Example: "වෙළඳපොළ ඉහළට ගමන් කරයි".
+        2. DO NOT use Singlish under any circumstances (Never write "api ekka thiyenawa").
+        3. Keep technical trading terms EXACTLY in English (e.g., Trend, Momentum, Support, Resistance, Bullish, Bearish, FVG, Order Book).
 
         You MUST respond ONLY with a valid JSON object. Do not add markdown blocks.
         Format strictly like this:
         {
           "direction": "BUY or HOLD or WAIT",
           "emoji": "🟢 for buy, ⚪ for hold/wait",
-          "entry": "precise number",
-          "tp": "precise number",
-          "sl": "precise number using ATR",
+          "entry": "Final calculated number ONLY (e.g., 67000.50)",
+          "tp": "Final calculated number ONLY (e.g., 68500.00)",
+          "sl": "Final calculated number ONLY (e.g., 66500.00)",
           "allocation": "e.g., 5% to 10%",
           "confidence": "e.g., 85%",
-          "trend": "Short Sinhala sentence explaining MTF and EMA trend (Keep trading words in English).",
-          "sentiment": "Short Sinhala sentence explaining F&G, Orderbook, and News (Keep trading words in English).",
-          "momentum": "Short Sinhala sentence explaining RSI, Pattern, and Divergence (Keep trading words in English)."
+          "trend": "Explain in proper Sinhala alphabet (සිංහල අකුරෙන්).",
+          "sentiment": "Explain in proper Sinhala alphabet (සිංහල අකුරෙන්).",
+          "momentum": "Explain in proper Sinhala alphabet (සිංහල අකුරෙන්)."
         }`;
 
         const groqUrl = 'https://api.groq.com/openai/v1/chat/completions';
@@ -121,7 +126,7 @@ Momentum: ${data.momentum}
 ⚡ සටහන: මෙය මූල්‍ය උපදේශනයක් නොවන අතර, සැමවිටම ඔබේ අවදානම කළමනාකරණය කරගන්න.
 
 📌 Track කිරීමට .track ලෙස Reply කරන්න.
-[TARGETS|ENTRY:${data.entry.replace(/,/g, '')}|TP:${data.tp.replace(/,/g, '')}|SL:${data.sl.replace(/,/g, '')}]`;
+[TARGETS|ENTRY:${String(data.entry).replace(/,/g, '')}|TP:${String(data.tp).replace(/,/g, '')}|SL:${String(data.sl).replace(/,/g, '')}]`;
         
         await reply(outMsg.trim());
         await m.react('✅');
@@ -186,24 +191,29 @@ async (conn, mek, m, { reply, args }) => {
         - TA: RSI=${rsi} | ATR=${atr} | Pattern=${candlePattern} | Divergence=${divergence}
         - SMC: Res=$${marketSMC.resistance} | Sup=$${marketSMC.support} | Fib 0.618=$${marketSMC.fib618}
 
+        CRITICAL MATH RULES:
+        1. For "entry", "tp", and "sl" fields, perform the math calculation yourself and output ONLY the final decimal number.
+        2. DO NOT output formulas or equations like "67000 - 2*90". Output only the final result like "66820.50".
+
         CRITICAL LANGUAGE RULES:
-        1. Write the explanation STRICTLY in proper Sinhala script (සිංහල අකුරෙන්). Do NOT use Singlish.
-        2. DO NOT translate technical trading terms. Keep terms like Trend, Momentum, Support, Resistance, Bullish, Bearish, FVG, Order Book, Long, Short EXACTLY in English.
+        1. Write explanations STRICTLY using the Sinhala alphabet/script (සිංහල අකුරෙන්). Example: "වෙළඳපොළ ඉහළට ගමන් කරයි".
+        2. DO NOT use Singlish under any circumstances (Never write "api ekka thiyenawa").
+        3. Keep technical trading terms EXACTLY in English (e.g., Trend, Momentum, Support, Resistance, Bullish, Bearish, FVG, Order Book).
 
         You MUST respond ONLY with a valid JSON object. Do not add markdown blocks.
         Format strictly like this:
         {
           "direction": "LONG (Buy) or SHORT (Sell) or WAIT (Neutral)",
           "emoji": "🟢 for long, 🔴 for short, ⚪ for wait",
-          "entry": "precise number",
-          "tp": "precise number",
-          "sl": "precise number using ATR",
+          "entry": "Final calculated number ONLY (e.g., 67000.50)",
+          "tp": "Final calculated number ONLY (e.g., 68500.00)",
+          "sl": "Final calculated number ONLY (e.g., 66500.00)",
           "leverage": "e.g., 5x (Isolated)",
           "margin": "e.g., 3%",
           "confidence": "e.g., 85%",
-          "trend": "Short Sinhala sentence explaining MTF and EMA trend (Keep trading words in English).",
-          "sentiment": "Short Sinhala sentence explaining F&G, Orderbook, and News (Keep trading words in English).",
-          "momentum": "Short Sinhala sentence explaining RSI, Pattern, and Divergence (Keep trading words in English)."
+          "trend": "Explain in proper Sinhala alphabet (සිංහල අකුරෙන්).",
+          "sentiment": "Explain in proper Sinhala alphabet (සිංහල අකුරෙන්).",
+          "momentum": "Explain in proper Sinhala alphabet (සිංහල අකුරෙන්)."
         }`;
 
         const groqUrl = 'https://api.groq.com/openai/v1/chat/completions';
@@ -249,7 +259,7 @@ Momentum: ${data.momentum}
 ⚡ සටහන: මෙය මූල්‍ය උපදේශනයක් නොවන අතර, සැමවිටම ඔබේ අවදානම කළමනාකරණය කරගන්න.
 
 📌 Track කිරීමට .track ලෙස Reply කරන්න.
-[TARGETS|ENTRY:${data.entry.replace(/,/g, '')}|TP:${data.tp.replace(/,/g, '')}|SL:${data.sl.replace(/,/g, '')}]`;
+[TARGETS|ENTRY:${String(data.entry).replace(/,/g, '')}|TP:${String(data.tp).replace(/,/g, '')}|SL:${String(data.sl).replace(/,/g, '')}]`;
         
         await reply(outMsg.trim());
         await m.react('✅');
