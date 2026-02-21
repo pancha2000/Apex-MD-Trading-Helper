@@ -2,16 +2,14 @@ const { cmd } = require('../lib/commands');
 const config = require('../config');
 const axios = require('axios');
 const db = require('../lib/database');
-
-// Modular Architecture Imports
 const binance = require('../lib/binance');
 const indicators = require('../lib/indicators');
 const smc = require('../lib/smartmoney');
 
-// ================== SPOT COMMAND (ULTIMATE) ==================
+// ================== SPOT COMMAND (THE ULTIMATE AI) ==================
 cmd({
     pattern: "spot",
-    desc: "Ultimate Spot AI with MTF, Divergence & Risk Management",
+    desc: "Ultimate Spot AI with Whales, Patterns & MTF",
     category: "crypto",
     react: "🟢",
     filename: __filename
@@ -26,31 +24,39 @@ async (conn, mek, m, { reply, args }) => {
         let timeframe = args[1] ? args[1].toLowerCase() : '1d'; 
 
         await m.react('⏳');
-        await reply(`⏳ *Binance (${timeframe} + Macro TFs) Timeframes විශ්ලේෂණය කරමින් පවතී...*`);
+        await reply(`⏳ *Binance දත්ත, Order Books සහ Global Sentiment විශ්ලේෂණය කරමින් පවතී...*`);
 
-        // MTF Data Fetching
+        // දත්ත ලබාගැනීම
         const currentCandles = await binance.getKlineData(coin, timeframe);
         const tf4hCandles = await binance.getKlineData(coin, '4h', 60);
         const tf1dCandles = await binance.getKlineData(coin, '1d', 60);
+        const orderBook = await binance.getOrderBook(coin);
+        const fng = await binance.getFearAndGreed();
 
         const currentPrice = parseFloat(currentCandles[currentCandles.length - 1][4]).toFixed(2);
         
+        // Indicators
         const rsi = indicators.calculateRSI(currentCandles);
         const emaCurrent = indicators.calculateEMA(currentCandles);
         const ema4H = indicators.calculateEMA(tf4hCandles);
         const ema1D = indicators.calculateEMA(tf1dCandles);
-        
         const atr = indicators.calculateATR(currentCandles);
         const divergence = indicators.checkDivergence(currentCandles);
+        const candlePattern = indicators.checkCandlePattern(currentCandles);
         const marketSMC = smc.analyzeSMC(currentCandles);
 
         const prompt = `You are a Master Institutional Crypto Spot Trader. Analyze ${coin} for SPOT TRADING.
         Current Price: $${currentPrice}
         
-        [MULTI-TIMEFRAME ANALYSIS]
+        [MULTI-TIMEFRAME & SENTIMENT]
         - Entry TF (${timeframe}) EMA(50): $${emaCurrent}
-        - Medium TF (4H) EMA(50): $${ema4H}
-        - Macro TF (1D) EMA(50): $${ema1D}
+        - 4H EMA(50): $${ema4H} | 1D EMA(50): $${ema1D}
+        - Global Fear & Greed Index: ${fng}
+
+        [ORDER FLOW & PATTERNS]
+        - Total Buy Volume (Bids): $${orderBook.totalBids}
+        - Total Sell Volume (Asks): $${orderBook.totalAsks}
+        - Latest Candlestick Pattern: ${candlePattern}
 
         [INDICATORS & SMC]
         - RSI: ${rsi} | Divergence: ${divergence}
@@ -61,15 +67,15 @@ async (conn, mek, m, { reply, args }) => {
 
         Provide a HIGHLY PROFESSIONAL, short analysis using Sinhala mixed with English trading terms.
         Format strictly like this:
-        📌 MTF Trend: (Are timeframes aligned? Explain briefly)
-        📉 Momentum & Divergence: (Mention Divergence and RSI status)
-        🤖 AI Decision: (BUY, HOLD, or WAIT)
+        📌 Market Overview: (Combine MTF Trend, Fear&Greed, and Whale Order Book status)
+        📉 Price Action & Momentum: (Mention Candle Pattern, Divergence and RSI)
+        🤖 AI Decision: (BUY, HOLD, or WAIT - base this on Confluence)
         🛡️ Confidence: (e.g., 90%)
         🎯 Spot Targets: 
-           - Entry Zone: (Use Fib 0.618 or Support for DCA accumulation)
-           - TP: (Target based on Resistance)
-           - SL: (Safe Stop Loss or Invalidated point using ATR)
-        🧮 Portfolio Risk: (Suggest how much % of portfolio to allocate to this spot bag).
+           - Entry Zone: (Precise accumulation zone based on Fib/Support and Whale Orders)
+           - TP: (Target based on Resistance/FVG)
+           - SL: (Invalidation point using ATR)
+        🧮 Portfolio Risk: (Suggest exactly how much % of portfolio to allocate).
 
         IMPORTANT: At the very end, output exactly:
         [TARGETS|ENTRY:number|TP:number|SL:number]`;
@@ -99,11 +105,11 @@ ${aiResponse}
     } catch (e) { await reply('❌ Error: ' + e.message); }
 });
 
-// ================== FUTURES COMMAND (ULTIMATE) ==================
+// ================== FUTURES COMMAND (THE ULTIMATE AI) ==================
 cmd({
     pattern: "future",
     alias: ["futures"],
-    desc: "Ultimate Futures AI with MTF, Divergence & Risk Management",
+    desc: "Ultimate Futures AI with Whales, Patterns & MTF",
     category: "crypto",
     react: "🔴",
     filename: __filename
@@ -118,31 +124,39 @@ async (conn, mek, m, { reply, args }) => {
         let timeframe = args[1] ? args[1].toLowerCase() : '15m'; 
 
         await m.react('⏳');
-        await reply(`⏳ *Binance (${timeframe}, 1h, 4h) Timeframes තුනම විශ්ලේෂණය කරමින් පවතී...*`);
+        await reply(`⏳ *Binance දත්ත, Order Books සහ Global Sentiment විශ්ලේෂණය කරමින් පවතී...*`);
 
-        // MTF Data Fetching
+        // දත්ත ලබාගැනීම
         const currentCandles = await binance.getKlineData(coin, timeframe);
         const hourlyCandles = await binance.getKlineData(coin, '1h', 60); 
         const macroCandles = await binance.getKlineData(coin, '4h', 60);  
+        const orderBook = await binance.getOrderBook(coin);
+        const fng = await binance.getFearAndGreed();
 
         const currentPrice = parseFloat(currentCandles[currentCandles.length - 1][4]).toFixed(2);
         
+        // Indicators
         const rsi = indicators.calculateRSI(currentCandles);
         const emaCurrent = indicators.calculateEMA(currentCandles);
         const ema1H = indicators.calculateEMA(hourlyCandles);
         const ema4H = indicators.calculateEMA(macroCandles);
-        
         const atr = indicators.calculateATR(currentCandles);
         const divergence = indicators.checkDivergence(currentCandles);
+        const candlePattern = indicators.checkCandlePattern(currentCandles);
         const marketSMC = smc.analyzeSMC(currentCandles);
 
         const prompt = `You are a Master Institutional Crypto Trader. Analyze ${coin} for FUTURES TRADING.
         Current Price: $${currentPrice}
         
-        [MULTI-TIMEFRAME ANALYSIS]
+        [MULTI-TIMEFRAME & SENTIMENT]
         - Entry TF (${timeframe}) EMA(50): $${emaCurrent}
-        - Medium TF (1H) EMA(50): $${ema1H}
-        - Macro TF (4H) EMA(50): $${ema4H}
+        - 1H EMA(50): $${ema1H} | 4H EMA(50): $${ema4H}
+        - Global Fear & Greed Index: ${fng}
+
+        [ORDER FLOW & PATTERNS]
+        - Total Buy Volume (Bids): $${orderBook.totalBids}
+        - Total Sell Volume (Asks): $${orderBook.totalAsks}
+        - Latest Candlestick Pattern: ${candlePattern}
 
         [INDICATORS & SMC]
         - RSI: ${rsi} | Divergence: ${divergence}
@@ -153,15 +167,15 @@ async (conn, mek, m, { reply, args }) => {
 
         Provide a HIGHLY PROFESSIONAL, short analysis using Sinhala mixed with English trading terms.
         Format strictly like this:
-        📌 MTF Trend: (Are ${timeframe}, 1H, and 4H aligned? Explain briefly)
-        📉 Momentum & Divergence: (Mention if there is Divergence and what RSI shows)
-        🤖 AI Decision: (LONG, SHORT, or WAIT)
+        📌 Market Overview: (Combine MTF Trend, Fear&Greed, and Whale Order Book status)
+        📉 Price Action & Momentum: (Mention Candle Pattern, Divergence and RSI)
+        🤖 AI Decision: (LONG, SHORT, or WAIT - base this on Confluence)
         🛡️ Confidence: (e.g., 90%)
         🎯 Trade Setup: 
-           - Entry: (Use Fib 0.618 or FVG for precise entry)
+           - Entry: (Precise sniper entry based on Fib/FVG and Whale Support/Resistance)
            - TP: (Target based on Resistance/Support)
            - SL: (Safe Stop Loss using ATR)
-        🧮 Risk Management: (Suggest exactly how much margin % to use and maximum leverage based on ATR Volatility).
+        🧮 Risk Management: (Suggest exactly how much margin % to use and maximum leverage).
 
         IMPORTANT: At the very end, output exactly:
         [TARGETS|ENTRY:number|TP:number|SL:number]`;
