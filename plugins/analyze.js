@@ -16,7 +16,7 @@ function formatRecentCandles(candles) {
 // ================== SPOT COMMAND ==================
 cmd({
     pattern: "spot",
-    desc: "Advanced Spot Trading Analysis",
+    desc: "Advanced Spot Trading Analysis with ATR & Fib",
     category: "crypto",
     react: "🟢",
     filename: __filename
@@ -36,22 +36,30 @@ async (conn, mek, m, { reply, args }) => {
         // Modules හරහා දත්ත ලබාගැනීම
         const candles = await binance.getKlineData(coin, timeframe);
         const currentPrice = parseFloat(candles[candles.length - 1][4]).toFixed(2); 
+        
         const rsi = indicators.calculateRSI(candles);
         const ema = indicators.calculateEMA(candles);
-        const marketSMC = smc.analyzeSMC(candles);
+        const atr = indicators.calculateATR(candles); // 👈 අලුත් ATR එක
+        
+        const marketSMC = smc.analyzeSMC(candles); // 👈 මේක ඇතුළේ දැන් Fib තියෙනවා
 
         const prompt = `Analyze ${coin} on ${timeframe} for SPOT TRADING.
         Current Price: $${currentPrice}, RSI: ${rsi}, EMA(50): ${ema}
+        ATR (Volatility): ${atr}
         Resistance: $${marketSMC.resistance}, Support: $${marketSMC.support}
         Bullish FVG: ${marketSMC.bullishFVG}, Bearish FVG: ${marketSMC.bearishFVG}
+        Fibonacci Golden Zone: $${marketSMC.fib618} - $${marketSMC.fib786}
 
         Provide a VERY SHORT analysis using Sinhala mixed with English trading terms.
         Format strictly like this:
-        📌 Market Status: (Trend, RSI, EMA status)
-        🤖 AI Decision: (BUY/HOLD/WAIT)
-        🛡️ Confidence: (e.g., 85%)
-        🎯 Targets: Entry, TP, SL
-        💡 DCA Strategy: (Explain based on Support/FVG)
+        📌 Market Status: (Trend relative to EMA, Volatility based on ATR, and RSI status)
+        🤖 AI Decision: (BUY, HOLD, or WAIT)
+        🛡️ Confidence: (e.g., 85%) & Risk Level
+        🎯 Spot Targets: 
+           - Entry Zone: (Use Fibonacci Golden Zone or Support for DCA accumulation)
+           - TP: (Target based on Resistance/FVG)
+           - SL: (Safe Stop Loss or Invalidated point)
+        💡 Spot Strategy: (Mention if it's safe to hold, or if they should wait for a drop to the Golden Pocket).
 
         IMPORTANT: At the very end, output exactly:
         [TARGETS|ENTRY:number|TP:number|SL:number]`;
@@ -85,7 +93,7 @@ ${aiResponse}
 cmd({
     pattern: "future",
     alias: ["futures"],
-    desc: "Advanced Futures Trading Analysis",
+    desc: "Advanced Futures Trading Analysis with ATR & Fib",
     category: "crypto",
     react: "🔴",
     filename: __filename
@@ -105,22 +113,30 @@ async (conn, mek, m, { reply, args }) => {
         // Modules හරහා දත්ත ලබාගැනීම
         const candles = await binance.getKlineData(coin, timeframe);
         const currentPrice = parseFloat(candles[candles.length - 1][4]).toFixed(2);
+        
         const rsi = indicators.calculateRSI(candles);
         const ema = indicators.calculateEMA(candles);
-        const marketSMC = smc.analyzeSMC(candles);
+        const atr = indicators.calculateATR(candles); // 👈 අලුත් ATR එක
+        
+        const marketSMC = smc.analyzeSMC(candles); // 👈 මේක ඇතුළේ දැන් Fib තියෙනවා
 
         const prompt = `Analyze ${coin} on ${timeframe} for FUTURES TRADING.
         Current Price: $${currentPrice}, RSI: ${rsi}, EMA(50): ${ema}
+        ATR (Volatility): ${atr}
         Resistance: $${marketSMC.resistance}, Support: $${marketSMC.support}
         Bullish FVG: ${marketSMC.bullishFVG}, Bearish FVG: ${marketSMC.bearishFVG}
+        Fibonacci Golden Zone: $${marketSMC.fib618} - $${marketSMC.fib786}
 
         Provide a VERY SHORT analysis using Sinhala mixed with English trading terms.
         Format strictly like this:
         📌 Market Status: (Trend relative to EMA, and RSI meaning)
         🤖 AI Decision: (LONG, SHORT, or WAIT)
         🛡️ Confidence: (e.g., 85%) & Risk Level
-        🎯 Trade Setup: Entry, TP, Strict SL
-        💡 Trade Management (DCA vs SL): (If moving towards SL, mention DCA at FVG/Support or early exit).
+        🎯 Trade Setup: 
+           - Entry: (Use Fibonacci Golden Zone or FVG for precise sniper entry)
+           - TP: (Target based on Support/Resistance)
+           - SL: (Calculate a safe Stop Loss using ATR to avoid Stop Hunts)
+        💡 Trade Management: (If moving towards SL, mention DCA at FVG/Support or early exit).
 
         IMPORTANT: At the very end, output exactly:
         [TARGETS|ENTRY:number|TP:number|SL:number]`;
