@@ -2,8 +2,6 @@ const { cmd } = require('../lib/commands');
 const config = require('../config');
 const axios = require('axios');
 const db = require('../lib/database');
-
-// Modular Architecture Imports
 const binance = require('../lib/binance');
 const indicators = require('../lib/indicators');
 const smc = require('../lib/smartmoney');
@@ -11,7 +9,7 @@ const smc = require('../lib/smartmoney');
 // ================== SPOT COMMAND (THE ULTIMATE AI) ==================
 cmd({
     pattern: "spot",
-    desc: "Ultimate Spot AI with Whales, Patterns & MTF",
+    desc: "Ultimate Spot AI with Exact Math & Formatting",
     category: "crypto",
     react: "🟢",
     filename: __filename
@@ -26,9 +24,8 @@ async (conn, mek, m, { reply, args }) => {
         let timeframe = args[1] ? args[1].toLowerCase() : '1d'; 
 
         await m.react('⏳');
-        await reply(`⏳ *Advanced AI විශ්ලේෂණය ආරම්භ කෙරේ...*`);
+        await reply(`⏳ *Advanced Spot විශ්ලේෂණය ආරම්භ කෙරේ...*`);
 
-        // දත්ත ලබාගැනීම
         const currentCandles = await binance.getKlineData(coin, timeframe);
         const tf4hCandles = await binance.getKlineData(coin, '4h', 60);
         const tf1dCandles = await binance.getKlineData(coin, '1d', 60);
@@ -39,7 +36,6 @@ async (conn, mek, m, { reply, args }) => {
 
         const currentPrice = parseFloat(currentCandles[currentCandles.length - 1][4]).toFixed(2);
         
-        // Indicators & SMC
         const rsi = indicators.calculateRSI(currentCandles);
         const emaCurrent = indicators.calculateEMA(currentCandles);
         const ema4H = indicators.calculateEMA(tf4hCandles);
@@ -49,6 +45,15 @@ async (conn, mek, m, { reply, args }) => {
         const candlePattern = indicators.checkCandlePattern(currentCandles);
         const poc = indicators.calculatePOC(currentCandles);
         const marketSMC = smc.analyzeSMC(currentCandles);
+
+        // Spot Deterministic Math (Only Long scenarios in Spot)
+        const atrVal = parseFloat(atr);
+        const fib618 = parseFloat(marketSMC.fib618);
+        const res = parseFloat(marketSMC.resistance);
+        
+        const spotEntry = fib618.toFixed(2);
+        const spotTP = res.toFixed(2);
+        const spotSL = (fib618 - (atrVal * 2)).toFixed(2); // ATRx2 below entry
 
         const prompt = `You are a Master Institutional Crypto Spot Trader. Analyze ${coin} for SPOT TRADING.
         Current Price: $${currentPrice}
@@ -60,9 +65,9 @@ async (conn, mek, m, { reply, args }) => {
         - TA: RSI=${rsi} | ATR=${atr} | Pattern=${candlePattern} | Divergence=${divergence}
         - SMC: Res=$${marketSMC.resistance} | Sup=$${marketSMC.support} | Fib 0.618=$${marketSMC.fib618}
 
-        CRITICAL MATH RULES:
-        1. For "entry", "tp", and "sl" fields, perform the math calculation yourself and output ONLY the final decimal number.
-        2. DO NOT output formulas or equations like "67000 - 2*90". Output only the final result like "66820.50".
+        CRITICAL MATH RULES (DO NOT CALCULATE ANYTHING YOURSELF):
+        If you decide to issue a BUY signal, you MUST output exactly these numbers:
+        entry: "${spotEntry}", tp: "${spotTP}", sl: "${spotSL}"
 
         CRITICAL LANGUAGE RULES:
         1. Write explanations STRICTLY using the Sinhala alphabet/script (සිංහල අකුරෙන්). Example: "වෙළඳපොළ ඉහළට ගමන් කරයි".
@@ -74,9 +79,9 @@ async (conn, mek, m, { reply, args }) => {
         {
           "direction": "BUY or HOLD or WAIT",
           "emoji": "🟢 for buy, ⚪ for hold/wait",
-          "entry": "Final calculated number ONLY (e.g., 67000.50)",
-          "tp": "Final calculated number ONLY (e.g., 68500.00)",
-          "sl": "Final calculated number ONLY (e.g., 66500.00)",
+          "entry": "Strictly the number provided in rules above",
+          "tp": "Strictly the number provided in rules above",
+          "sl": "Strictly the number provided in rules above",
           "allocation": "e.g., 5% to 10%",
           "confidence": "e.g., 85%",
           "trend": "Explain in proper Sinhala alphabet (සිංහල අකුරෙන්).",
@@ -140,7 +145,7 @@ Momentum: ${data.momentum}
 cmd({
     pattern: "future",
     alias: ["futures"],
-    desc: "Ultimate Futures AI with Flawless Formatting",
+    desc: "Ultimate Futures AI with Exact Math & Formatting",
     category: "crypto",
     react: "🔴",
     filename: __filename
@@ -155,9 +160,8 @@ async (conn, mek, m, { reply, args }) => {
         let timeframe = args[1] ? args[1].toLowerCase() : '15m'; 
 
         await m.react('⏳');
-        await reply(`⏳ *Advanced AI විශ්ලේෂණය ආරම්භ කෙරේ...*`);
+        await reply(`⏳ *Advanced Futures විශ්ලේෂණය ආරම්භ කෙරේ...*`);
 
-        // දත්ත ලබාගැනීම
         const currentCandles = await binance.getKlineData(coin, timeframe);
         const hourlyCandles = await binance.getKlineData(coin, '1h', 60); 
         const macroCandles = await binance.getKlineData(coin, '4h', 60);  
@@ -169,7 +173,6 @@ async (conn, mek, m, { reply, args }) => {
 
         const currentPrice = parseFloat(currentCandles[currentCandles.length - 1][4]).toFixed(2);
         
-        // Indicators & SMC
         const rsi = indicators.calculateRSI(currentCandles);
         const emaCurrent = indicators.calculateEMA(currentCandles);
         const ema1H = indicators.calculateEMA(hourlyCandles);
@@ -179,6 +182,20 @@ async (conn, mek, m, { reply, args }) => {
         const candlePattern = indicators.checkCandlePattern(currentCandles);
         const poc = indicators.calculatePOC(currentCandles);
         const marketSMC = smc.analyzeSMC(currentCandles);
+
+        // Futures Deterministic Math 
+        const atrVal = parseFloat(atr);
+        const fib618 = parseFloat(marketSMC.fib618);
+        const res = parseFloat(marketSMC.resistance);
+        const sup = parseFloat(marketSMC.support);
+
+        const longEntry = fib618.toFixed(2);
+        const longTP = res.toFixed(2);
+        const longSL = (fib618 - (atrVal * 2)).toFixed(2);
+
+        const shortEntry = res.toFixed(2); 
+        const shortTP = sup.toFixed(2);
+        const shortSL = (res + (atrVal * 2)).toFixed(2);
 
         const prompt = `You are a Master Institutional Crypto AI. Analyze ${coin} for FUTURES TRADING.
         Current Price: $${currentPrice}
@@ -191,9 +208,12 @@ async (conn, mek, m, { reply, args }) => {
         - TA: RSI=${rsi} | ATR=${atr} | Pattern=${candlePattern} | Divergence=${divergence}
         - SMC: Res=$${marketSMC.resistance} | Sup=$${marketSMC.support} | Fib 0.618=$${marketSMC.fib618}
 
-        CRITICAL MATH RULES:
-        1. For "entry", "tp", and "sl" fields, perform the math calculation yourself and output ONLY the final decimal number.
-        2. DO NOT output formulas or equations like "67000 - 2*90". Output only the final result like "66820.50".
+        CRITICAL MATH RULES (DO NOT CALCULATE ANYTHING YOURSELF):
+        Based on your analysis, if you decide to go LONG, you MUST output exactly:
+        entry: "${longEntry}", tp: "${longTP}", sl: "${longSL}"
+        
+        If you decide to go SHORT, you MUST output exactly:
+        entry: "${shortEntry}", tp: "${shortTP}", sl: "${shortSL}"
 
         CRITICAL LANGUAGE RULES:
         1. Write explanations STRICTLY using the Sinhala alphabet/script (සිංහල අකුරෙන්). Example: "වෙළඳපොළ ඉහළට ගමන් කරයි".
@@ -205,9 +225,9 @@ async (conn, mek, m, { reply, args }) => {
         {
           "direction": "LONG (Buy) or SHORT (Sell) or WAIT (Neutral)",
           "emoji": "🟢 for long, 🔴 for short, ⚪ for wait",
-          "entry": "Final calculated number ONLY (e.g., 67000.50)",
-          "tp": "Final calculated number ONLY (e.g., 68500.00)",
-          "sl": "Final calculated number ONLY (e.g., 66500.00)",
+          "entry": "Strictly the number provided in rules above",
+          "tp": "Strictly the number provided in rules above",
+          "sl": "Strictly the number provided in rules above",
           "leverage": "e.g., 5x (Isolated)",
           "margin": "e.g., 3%",
           "confidence": "e.g., 85%",
@@ -269,7 +289,7 @@ Momentum: ${data.momentum}
     }
 });
 
-// ================== TRACK COMMAND (කිසිම වෙනසක් නැත) ==================
+// ================== TRACK COMMAND ==================
 cmd({
     pattern: "track",
     desc: "Save and track a crypto trade",
