@@ -4,14 +4,14 @@ const binance = require('../lib/binance');
 const indicators = require('../lib/indicators');
 const smc = require('../lib/smartmoney');
 
-// 📌 Default Coins List (ප්‍රධාන කොයින් ටික)
+// 📌 Default Coins List
 let scanList = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOGEUSDT', 'DOTUSDT'];
 
 let scanIntervalId = null; 
 let isScanning = false;
 
-// ස්කෑන් කිරීමේ ක්‍රියාවලිය
-async function performScan(conn, jid, timeframe = '15m') {
+// ස්කෑන් කිරීමේ ක්‍රියාවලිය (අලුත් කරන ලදී)
+async function performScan(conn, jid, timeframe = '15m', isFirstRun = false) {
     try {
         let alerts = [];
         
@@ -26,11 +26,11 @@ async function performScan(conn, jid, timeframe = '15m') {
 
             let signal = null;
 
-            // 1. Oversold + Bullish Pattern (Long)
+            // 1. Oversold + Bullish Pattern
             if (rsi < 35 && pattern.includes('🟢')) {
                 signal = 'LONG 🟢';
             }
-            // 2. Overbought + Bearish Pattern (Short)
+            // 2. Overbought + Bearish Pattern
             else if (rsi > 65 && pattern.includes('🔴')) {
                 signal = 'SHORT 🔴';
             }
@@ -39,22 +39,28 @@ async function performScan(conn, jid, timeframe = '15m') {
             const fib618 = parseFloat(marketSMC.fib618);
             const diffPercent = Math.abs(currentPrice - fib618) / fib618 * 100;
             if (diffPercent < 0.5 && !signal) { 
-                signal = 'WATCH ⚠️'; 
+                signal = 'WATCH ⚠️ (Near Fib 0.618)'; 
             }
 
-            // කෙටි Alert එකක් සෑදීම (ඔයා ඉල්ලපු විදියටම)
             if (signal) {
                 let cleanCoin = coin.replace('USDT', '');
-                alerts.push(`🪙 *${cleanCoin}* - ${signal}`);
+                alerts.push(`🪙 *${cleanCoin}* - ${signal} (RSI: ${rsi})`);
             }
         }
 
-        // අවස්ථා හමුවුණා නම් පමණක් Group එකට මැසේජ් එක යැවීම
+        // අවස්ථා හමුවුණා නම් Group එකට මැසේජ් එක යැවීම
         if (alerts.length > 0) {
             const outMsg = `🚨 *MARKET ALERTS (${timeframe})* 🚨\n\n` + alerts.join('\n');
             await conn.sendMessage(jid, { text: outMsg });
+        } 
+        // පළමු ස්කෑන් එකේදී මුකුත්ම හමුවුණේ නැත්නම් ඒ බව දැනුම් දීම
+        else if (isFirstRun) {
+            await conn.sendMessage(jid, { text: `✅ *පළමු ස්කෑන් කිරීම අවසන්!* (${timeframe})\n\nමේ මොහොතේ කිසිදු Coin එකක පැහැදිලි Trade Setup එකක් හමුවුණේ නැත. මම දිගටම පසුබිමෙන් මාකට් එක අධීක්ෂණය කරමි... 🔍` });
         }
+
     } catch (error) {
+        // මොකක් හරි Error එකක් ආවොත් ඒක චැට් එකටම දානවා
+        await conn.sendMessage(jid, { text: `❌ *Scanner Error:* ${error.message}` });
         console.log("Scanner Error:", error.message);
     }
 }
@@ -70,7 +76,6 @@ cmd({
 async (conn, mek, m, { reply, args }) => {
     const action = args[0] ? args[0].toLowerCase() : '';
     
-    // 1. OFF කිරීම
     if (action === 'off') {
         if (!isScanning) return reply("⚠️ Auto Scanner දැනටමත් OFF කර ඇත.");
         clearInterval(scanIntervalId);
@@ -78,44 +83,43 @@ async (conn, mek, m, { reply, args }) => {
         return reply("🛑 *Auto Scanner සාර්ථකව OFF කරන ලදී.*");
     }
 
-    // 2. ON කිරීම
     if (action === 'on') {
-        if (isScanning) return reply("⚠️ Auto Scanner දැනටමත් ON කර ඇත. වෙනස් කිරීමට පළමුව එය '.autoscan off' මගින් OFF කරන්න.");
+        if (isScanning) return reply("⚠️ Auto Scanner දැනටමත් ON කර ඇත. වෙනස් කිරීමට පළමුව '.autoscan off' මගින් OFF කරන්න.");
         
         let intervalMinutes = args[1] ? parseInt(args[1]) : 15;
-        if (isNaN(intervalMinutes) || intervalMinutes < 5) return reply("❌ කරුණාකර නිවැරදි විනාඩි ගණනක් ලබා දෙන්න (අවම විනාඩි 5). \nඋදා: .autoscan on 15 15m");
+        if (isNaN(intervalMinutes) || intervalMinutes < 2) return reply("❌ කරුණාකර නිවැරදි විනාඩි ගණනක් ලබා දෙන්න. \nඋදා: .autoscan on 15 15m");
 
+        // මෙහිදී m.chat වෙනුවට සමහරවිට mek.chat අවශ්‍ය විය හැක, නමුත් සාමාන්‍යයෙන් m.chat හෝ m.key.remoteJid ක්‍රියා කරයි.
+        const targetJid = m.chat || mek.key?.remoteJid || m.key?.remoteJid;
         let timeframe = args[2] ? args[2].toLowerCase() : '15m'; 
 
         isScanning = true;
-        reply(`✅ *Auto Scanner ON කරන ලදී!*\n\n⏱️ පරතරය: විනාඩි ${intervalMinutes}\n📊 Timeframe: ${timeframe}\n🪙 Coins: ${scanList.length}\n\n(පළමු Scan එක දැන් ආරම්භ වේ...)`);
+        reply(`✅ *Auto Scanner ON කරන ලදී!*\n\n⏱️ පරතරය: විනාඩි ${intervalMinutes}\n📊 Timeframe: ${timeframe}\n🪙 Coins: ${scanList.length}\n\n(පළමු Scan එක දැන් ආරම්භ වේ. කරුණාකර රැඳී සිටින්න...)`);
         
-        await performScan(conn, m.chat, timeframe);
+        // පළමු ස්කෑන් එක (isFirstRun = true)
+        await performScan(conn, targetJid, timeframe, true);
 
+        // දිගටම ස්කෑන් කිරීම
         scanIntervalId = setInterval(async () => {
-            await performScan(conn, m.chat, timeframe);
+            await performScan(conn, targetJid, timeframe, false);
         }, intervalMinutes * 60 * 1000);
 
         return;
     }
 
-    // 3. අලුත් Coin එකක් එකතු කිරීම
     if (action === 'add') {
         if (!args[1]) return reply("❌ කරුණාකර Coin එකක් ලබා දෙන්න. \nඋදා: .autoscan add FET");
         let newCoin = args[1].toUpperCase();
         if (!newCoin.endsWith('USDT')) newCoin += 'USDT';
-        
         if (scanList.includes(newCoin)) return reply(`⚠️ ${newCoin} දැනටමත් Scanner ලිස්ට් එකේ තියෙනවා!`);
         scanList.push(newCoin);
         return reply(`✅ *${newCoin}* සාර්ථකව Scanner ලිස්ට් එකට එකතු කළා!`);
     }
 
-    // 4. Coin එකක් ඉවත් කිරීම
     if (action === 'remove') {
         if (!args[1]) return reply("❌ කරුණාකර Coin එකක් ලබා දෙන්න. \nඋදා: .autoscan remove FET");
         let delCoin = args[1].toUpperCase();
         if (!delCoin.endsWith('USDT')) delCoin += 'USDT';
-        
         const index = scanList.indexOf(delCoin);
         if (index > -1) {
             scanList.splice(index, 1);
@@ -125,12 +129,10 @@ async (conn, mek, m, { reply, args }) => {
         }
     }
 
-    // 5. දැනට තියෙන Coins ටික බැලීම
     if (action === 'list') {
         let listMsg = `📋 *Scanner Coins List (${scanList.length})*\n\n` + scanList.map(c => `🔸 ${c.replace('USDT', '')}`).join('\n');
         return reply(listMsg);
     }
 
-    // නිවැරදි කමාන්ඩ් එක ලබා නොදුන් විට පෙන්වන Help මෙනුව
-    reply(`❌ වැරදි කමාන්ඩ් එකක්!\n\n*භාවිතා කරන ආකාරය:*\n🟢 ON කිරීමට: .autoscan on 15 15m\n🔴 OFF කිරීමට: .autoscan off\n➕ Coin එකතු කිරීමට: .autoscan add WIF\n➖ Coin ඉවත් කිරීමට: .autoscan remove WIF\n📋 Coins ලැයිස්තුව බැලීමට: .autoscan list`);
+    reply(`❌ වැරදි කමාන්ඩ් එකක්!\n\n*භාවිතා කරන ආකාරය:*\n🟢 ON කිරීමට: .autoscan on 15 15m\n🔴 OFF කිරීමට: .autoscan off\n➕ Coin එකතු කිරීමට: .autoscan add WIF\n➖ ඉවත් කිරීමට: .autoscan remove WIF\n📋 ලැයිස්තුව: .autoscan list`);
 });
