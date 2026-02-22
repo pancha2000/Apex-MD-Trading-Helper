@@ -295,7 +295,7 @@ async (conn, mek, m, { reply, args }) => {
 Risk/Reward (RRR): ${data.rrr}
 ⚙️ Exact Leverage: ${data.leverage}
 💰 Margin to Deploy: ${data.margin}
-🛡️ Max Risk Amount: ${data.riskText}
+🛡️ Max Risk Amount: ${data.risk}
 Confidence: ${data.confidence} 🔥
 
 *📊 Institutional Analysis*
