@@ -6,10 +6,10 @@ const binance = require('../lib/binance');
 const indicators = require('../lib/indicators');
 const smc = require('../lib/smartmoney');
 
-// ================== SPOT COMMAND ==================
+// ================== SPOT COMMAND (Ultimate Version) ==================
 cmd({
     pattern: "spot",
-    desc: "Ultimate Spot AI with ChoCH & Position Sizing",
+    desc: "Ultimate Spot AI with VWAP, OB, Breakouts & Margin sizing",
     category: "crypto",
     react: "🟢",
     filename: __filename
@@ -24,7 +24,7 @@ async (conn, mek, m, { reply, args }) => {
         let timeframe = args[1] ? args[1].toLowerCase() : '1d'; 
 
         await m.react('⏳');
-        await reply(`⏳ *Advanced Spot විශ්ලේෂණය ආරම්භ කෙරේ...*`);
+        await reply(`⏳ *Ultimate Spot විශ්ලේෂණය ආරම්භ කෙරේ...*`);
 
         const currentCandles = await binance.getKlineData(coin, timeframe);
         const tf4hCandles = await binance.getKlineData(coin, '4h', 60);
@@ -35,27 +35,25 @@ async (conn, mek, m, { reply, args }) => {
         const news = await binance.getNewsHeadlines();
         const currentPrice = parseFloat(currentCandles[currentCandles.length - 1][4]).toFixed(2);
         
-        // Indicators
+        // 📊 Indicators (VWAP & Breakouts)
         const rsi = indicators.calculateRSI(currentCandles);
         const emaCurrent = indicators.calculateEMA(currentCandles);
         const ema4H = indicators.calculateEMA(tf4hCandles);
-        const ema1D = indicators.calculateEMA(tf1dCandles);
         const atr = indicators.calculateATR(currentCandles);
-        const divergence = indicators.checkDivergence(currentCandles);
-        const candlePattern = indicators.checkCandlePattern(currentCandles);
-        const poc = indicators.calculatePOC(currentCandles);
         const macd = indicators.calculateMACD(currentCandles);
+        const vwap = indicators.calculateVWAP(currentCandles);
+        const breakout = indicators.checkVolumeBreakout(currentCandles);
         
-        // 🧠 Smart Money Concepts
+        // 🧠 SMC (Order Blocks & KillZones)
         const marketSMC = smc.analyzeSMC(currentCandles);
-        const sweep = marketSMC.sweep; // 👈 දැන් SMC එකෙන් ගන්නේ
-        const choch = marketSMC.choch; // 👈 දැන් SMC එකෙන් ගන්නේ
+        const sweep = marketSMC.sweep; 
+        const choch = marketSMC.choch; 
+        const bullOB = marketSMC.bullishOB;
+        const bearOB = marketSMC.bearishOB;
+        const killzone = marketSMC.killzone;
 
         // 💰 User Margin
         const userMargin = await db.getMargin(m.sender) || 0;
-        let marginInfo = userMargin > 0 ? `Your Available Margin: $${userMargin}` : "No margin set by user.";
-
-        // Math
         const atrVal = parseFloat(atr);
         const fib618 = parseFloat(marketSMC.fib618);
         const res = parseFloat(marketSMC.resistance);
@@ -74,40 +72,38 @@ async (conn, mek, m, { reply, args }) => {
         const rrr = (reward / risk).toFixed(2);
 
         // 🧮 Spot Position Sizing (Risk 2%)
-        let spotAlloc = "N/A";
-        let riskAmount = "N/A";
+        let spotAllocText = "N/A", riskText = "N/A";
         if (userMargin > 0) {
             let riskMoney = userMargin * 0.02; // 2% risk
             let slPercent = risk / parseFloat(spotEntry);
             let posSize = riskMoney / slPercent;
-            spotAlloc = posSize > userMargin ? `Max $${userMargin} (Full Margin)` : `$${posSize.toFixed(2)}`;
-            riskAmount = `$${riskMoney.toFixed(2)}`;
+            spotAllocText = posSize > userMargin ? `Max $${userMargin} (Full Margin)` : `$${posSize.toFixed(2)}`;
+            riskText = `$${riskMoney.toFixed(2)}`;
+        } else {
+            spotAllocText = "Set .margin"; riskText = "Set .margin";
         }
 
         const prompt = `You are a Master Institutional Crypto Spot Trader. Analyze ${coin} for SPOT TRADING.
-        Current Price: $${currentPrice}
-        ${marginInfo}
+        Current Price: $${currentPrice} | Active Session: ${killzone}
         
         [DATA FEED]
-        - MTF EMA(50): ${timeframe}=$${emaCurrent}, 4H=$${ema4H}, 1D=$${ema1D}
+        - TA: VWAP=${vwap} | Breakout=${breakout} | RSI=${rsi} | MACD=${macd}
+        - SMC: ChoCH=${choch} | Sweep=${sweep} | Bull OB=${bullOB} | Bear OB=${bearOB}
         - Sentiment: F&G Index=${fng} | News=${news}
-        - Order Flow: Bids=$${orderBook.totalBids}, Asks=$${orderBook.totalAsks} | POC=$${poc}
-        - TA: RSI=${rsi} | MACD=${macd} | Pattern=${candlePattern} | Divergence=${divergence}
-        - Smart Money: ChoCH=${choch} | Liquidity Sweep=${sweep}
 
         CRITICAL MATH RULES:
         If BUY, you MUST output exactly:
-        entry: "${spotEntry}", tp1: "${spotTP1}", tp2: "${spotTP2}", tp3: "${spotTP3}", sl: "${spotSL}", rrr: "1:${rrr}", allocation: "${spotAlloc}", riskAmt: "${riskAmount}"
+        entry: "${spotEntry}", tp1: "${spotTP1}", tp2: "${spotTP2}", tp3: "${spotTP3}", sl: "${spotSL}", rrr: "1:${rrr}", allocation: "${spotAllocText}", riskAmt: "${riskText}"
+        If Fakeout detected or bad Risk, output WAIT.
 
         CRITICAL LANGUAGE RULES:
-        1. Write explanations STRICTLY using the Sinhala alphabet.
-        2. DO NOT use Singlish.
-        3. Keep technical terms exactly in English.
+        1. Write explanations STRICTLY using the Sinhala alphabet. DO NOT use Singlish.
+        2. Keep technical terms in English (e.g. Order Block, VWAP, Fakeout).
 
-        You MUST respond ONLY with a valid JSON object.
+        Respond ONLY with a valid JSON:
         {
           "direction": "BUY or HOLD or WAIT",
-          "emoji": "🟢 for buy, ⚪ for hold/wait",
+          "emoji": "🟢 or ⚪",
           "entry": "Strictly the number provided",
           "tp1": "Strictly the number provided",
           "tp2": "Strictly the number provided",
@@ -116,10 +112,9 @@ async (conn, mek, m, { reply, args }) => {
           "rrr": "Strictly the RRR provided",
           "allocation": "Strictly the allocation provided",
           "riskAmt": "Strictly the riskAmt provided",
-          "confidence": "e.g., 85%",
-          "trend": "Explain in proper Sinhala alphabet.",
-          "sentiment": "Explain in proper Sinhala alphabet.",
-          "momentum": "Explain in proper Sinhala alphabet."
+          "confidence": "e.g., 90%",
+          "trend": "Explain trend in proper Sinhala alphabet.",
+          "smc_summary": "Explain OB, VWAP & Breakouts in proper Sinhala alphabet."
         }`;
 
         const groqUrl = 'https://api.groq.com/openai/v1/chat/completions';
@@ -139,7 +134,7 @@ async (conn, mek, m, { reply, args }) => {
 ╚═══════════════════════════╝
 
 🪙 Coin: #${coin.replace('USDT', '')} / USDT
-⏱️ Timeframe: ${timeframe} | 4H | 1D (Multi-Timeframe Synced)
+⏱️ Session: ${killzone}
 
  *🎯 Trade Setup* 📉 Direction: ${data.direction} ${data.emoji}
 
@@ -150,18 +145,17 @@ async (conn, mek, m, { reply, args }) => {
    ▪️ TP 3 (Moon): $${data.tp3}
 🛡️ Stop Loss (SL): $${data.sl} 
 
-*⚖️ Risk Management*
+*⚖️ Risk Management (2% Risk)*
 Risk/Reward (RRR): ${data.rrr}
 💰 Investment to Deploy: ${data.allocation}
-🛡️ Amount at Risk (2%): ${data.riskAmt}
+🛡️ Max Risk Amount: ${data.riskAmt}
 Confidence: ${data.confidence} 🔥
 
-*📊 Market Analysis*
+*📊 Institutional Analysis*
 Trend: ${data.trend}
-Sentiment: ${data.sentiment}
-Momentum: ${data.momentum}
+Smart Money & Volume: ${data.smc_summary}
 
-⚡ සටහන: ඔබේ Margin එක .margin මගින් යාවත්කාලීන කරන්න.
+⚡ සටහන: ඔබේ ප්‍රාග්ධනය .margin මගින් යාවත්කාලීන කරන්න.
 📌 Track කිරීමට .track ලෙස Reply කරන්න.
 [TARGETS|ENTRY:${String(data.entry).replace(/,/g, '')}|TP:${String(data.tp2).replace(/,/g, '')}|SL:${String(data.sl).replace(/,/g, '')}]`;
         
@@ -170,11 +164,11 @@ Momentum: ${data.momentum}
     } catch (e) { await reply('❌ Error: Analysis ක්‍රියාවලියේ දෝෂයක්. නැවත උත්සාහ කරන්න.'); console.log(e); }
 });
 
-// ================== FUTURES COMMAND ==================
+// ================== FUTURES COMMAND (Ultimate Version) ==================
 cmd({
     pattern: "future",
     alias: ["futures"],
-    desc: "Ultimate Futures AI with Margin sizing",
+    desc: "Ultimate Futures AI with VWAP, OB & Breakouts",
     category: "crypto",
     react: "🔴",
     filename: __filename
@@ -189,7 +183,7 @@ async (conn, mek, m, { reply, args }) => {
         let timeframe = args[1] ? args[1].toLowerCase() : '15m'; 
 
         await m.react('⏳');
-        await reply(`⏳ *Advanced Futures විශ්ලේෂණය ආරම්භ කෙරේ...*`);
+        await reply(`⏳ *Ultimate Futures විශ්ලේෂණය ආරම්භ කෙරේ...*`);
 
         const currentCandles = await binance.getKlineData(coin, timeframe);
         const hourlyCandles = await binance.getKlineData(coin, '1h', 60); 
@@ -197,31 +191,28 @@ async (conn, mek, m, { reply, args }) => {
         
         const orderBook = await binance.getOrderBook(coin);
         const fng = await binance.getFearAndGreed();
-        const futuresData = await binance.getFuturesData(coin);
         const news = await binance.getNewsHeadlines();
         const currentPrice = parseFloat(currentCandles[currentCandles.length - 1][4]).toFixed(2);
         
-        // Indicators
+        // 📊 Indicators (VWAP & Breakouts ඇතුළුව)
         const rsi = indicators.calculateRSI(currentCandles);
         const emaCurrent = indicators.calculateEMA(currentCandles);
-        const ema1H = indicators.calculateEMA(hourlyCandles);
         const ema4H = indicators.calculateEMA(macroCandles);
         const atr = indicators.calculateATR(currentCandles);
-        const divergence = indicators.checkDivergence(currentCandles);
-        const candlePattern = indicators.checkCandlePattern(currentCandles);
-        const poc = indicators.calculatePOC(currentCandles);
         const macd = indicators.calculateMACD(currentCandles);
+        const vwap = indicators.calculateVWAP(currentCandles);
+        const breakout = indicators.checkVolumeBreakout(currentCandles);
         
-        // 🧠 Smart Money Concepts
+        // 🧠 SMC (Order Blocks & KillZones ඇතුළුව)
         const marketSMC = smc.analyzeSMC(currentCandles);
-        const sweep = marketSMC.sweep; // 👈 
-        const choch = marketSMC.choch; // 👈 
+        const sweep = marketSMC.sweep; 
+        const choch = marketSMC.choch; 
+        const bullOB = marketSMC.bullishOB;
+        const bearOB = marketSMC.bearishOB;
+        const killzone = marketSMC.killzone;
 
-        // 💰 User Margin
+        // 💰 Margin Math
         const userMargin = await db.getMargin(m.sender) || 0;
-        let marginInfo = userMargin > 0 ? `User's Available Margin: $${userMargin}` : "No margin set. Suggest defaults.";
-
-        // Math
         const atrVal = parseFloat(atr);
         const fib618 = parseFloat(marketSMC.fib618);
         const res = parseFloat(marketSMC.resistance);
@@ -232,8 +223,8 @@ async (conn, mek, m, { reply, args }) => {
         const ext2618 = parseFloat(marketSMC.ext2618);
         const extMinus1618 = parseFloat(marketSMC.extMinus1618);
 
-        // LONG Calculations
-        const longEntry = fib618.toFixed(2);
+        // LONG Math
+        const longEntry = fib618.toFixed(2); 
         const longTP1 = res.toFixed(2);
         const longTP2 = ext1618.toFixed(2);
         const longTP3 = ext2618.toFixed(2);
@@ -241,7 +232,7 @@ async (conn, mek, m, { reply, args }) => {
         const longRisk = Math.max(parseFloat(longEntry) - parseFloat(longSL), 0.0001);
         const rrrLong = ((parseFloat(longTP2) - parseFloat(longEntry)) / longRisk).toFixed(2);
 
-        // SHORT Calculations
+        // SHORT Math
         const shortEntry = res.toFixed(2); 
         const shortTP1 = fib618.toFixed(2);
         const shortTP2 = sup.toFixed(2);
@@ -250,59 +241,48 @@ async (conn, mek, m, { reply, args }) => {
         const shortRisk = Math.max(parseFloat(shortSL) - parseFloat(shortEntry), 0.0001);
         const rrrShort = ((parseFloat(shortEntry) - parseFloat(shortTP2)) / shortRisk).toFixed(2);
 
-        // 🧮 Futures Position Sizing Math (Risk 2%, Deploy 10% of margin per trade)
+        // Position Sizing
         let longLevText = "N/A", longMarginText = "N/A", riskText = "N/A";
         let shortLevText = "N/A", shortMarginText = "N/A";
-        
         if (userMargin > 0) {
-            let riskAmount = userMargin * 0.02; // 2% risk
-            let deployedMargin = userMargin * 0.10; // Use 10%
+            let riskAmount = userMargin * 0.02; 
+            let deployedMargin = userMargin * 0.10; 
             riskText = `$${riskAmount.toFixed(2)}`;
 
-            // Long Position Size & Leverage
             let longSlPercent = longRisk / parseFloat(longEntry);
-            let longPosSize = riskAmount / longSlPercent;
-            let reqLongLev = Math.ceil(longPosSize / deployedMargin);
-            if(reqLongLev < 1) reqLongLev = 1; else if(reqLongLev > 100) reqLongLev = 100;
-            longLevText = `${reqLongLev}x (Isolated)`;
+            let reqLongLev = Math.ceil((riskAmount / longSlPercent) / deployedMargin);
+            longLevText = `${Math.min(Math.max(reqLongLev, 1), 100)}x (Isolated)`;
             longMarginText = `$${deployedMargin.toFixed(2)}`;
 
-            // Short Position Size & Leverage
             let shortSlPercent = shortRisk / parseFloat(shortEntry);
-            let shortPosSize = riskAmount / shortSlPercent;
-            let reqShortLev = Math.ceil(shortPosSize / deployedMargin);
-            if(reqShortLev < 1) reqShortLev = 1; else if(reqShortLev > 100) reqShortLev = 100;
-            shortLevText = `${reqShortLev}x (Isolated)`;
+            let reqShortLev = Math.ceil((riskAmount / shortSlPercent) / deployedMargin);
+            shortLevText = `${Math.min(Math.max(reqShortLev, 1), 100)}x (Isolated)`;
             shortMarginText = `$${deployedMargin.toFixed(2)}`;
         } else {
-            longLevText = "Please set .margin"; longMarginText = "N/A";
-            shortLevText = "Please set .margin"; shortMarginText = "N/A";
+            longLevText = "Set .margin"; shortLevText = "Set .margin";
         }
 
         const prompt = `You are a Master Institutional Crypto AI. Analyze ${coin} for FUTURES TRADING.
-        Current Price: $${currentPrice}
-        ${marginInfo}
+        Current Price: $${currentPrice} | Active Session: ${killzone}
         
         [DATA FEED]
-        - MTF EMA(50): ${timeframe}=$${emaCurrent}, 1H=$${ema1H}, 4H=$${ema4H}
+        - TA: VWAP=${vwap} | Breakout=${breakout} | RSI=${rsi} | MACD=${macd}
+        - SMC: ChoCH=${choch} | Sweep=${sweep} | Bull OB=${bullOB} | Bear OB=${bearOB}
         - Sentiment: F&G Index=${fng} | News=${news}
-        - Order Flow: Bids=$${orderBook.totalBids}, Asks=$${orderBook.totalAsks} | POC=$${poc}
-        - TA: RSI=${rsi} | MACD=${macd} | Pattern=${candlePattern} | Divergence=${divergence}
-        - Smart Money: ChoCH=${choch} | Liquidity Sweep=${sweep}
 
         CRITICAL MATH RULES:
-        If LONG, output EXACTLY: entry: "${longEntry}", tp1: "${longTP1}", tp2: "${longTP2}", tp3: "${longTP3}", sl: "${longSL}", rrr: "1:${rrrLong}", leverage: "${longLevText}", margin: "${longMarginText}", risk: "${riskText}"
-        If SHORT, output EXACTLY: entry: "${shortEntry}", tp1: "${shortTP1}", tp2: "${shortTP2}", tp3: "${shortTP3}", sl: "${shortSL}", rrr: "1:${rrrShort}", leverage: "${shortLevText}", margin: "${shortMarginText}", risk: "${riskText}"
+        If LONG: entry: "${longEntry}", tp1: "${longTP1}", tp2: "${longTP2}", tp3: "${longTP3}", sl: "${longSL}", rrr: "1:${rrrLong}", leverage: "${longLevText}", margin: "${longMarginText}", risk: "${riskText}"
+        If SHORT: entry: "${shortEntry}", tp1: "${shortTP1}", tp2: "${shortTP2}", tp3: "${shortTP3}", sl: "${shortSL}", rrr: "1:${rrrShort}", leverage: "${shortLevText}", margin: "${shortMarginText}", risk: "${riskText}"
+        If Fakeout detected or bad Risk, output WAIT.
 
         CRITICAL LANGUAGE RULES:
-        1. Write explanations STRICTLY using the Sinhala alphabet.
-        2. DO NOT use Singlish.
-        3. Keep technical trading terms EXACTLY in English.
+        1. Write explanations STRICTLY using the Sinhala alphabet. DO NOT use Singlish.
+        2. Keep technical terms in English (e.g. Order Block, VWAP, Fakeout).
 
-        You MUST respond ONLY with a valid JSON object.
+        Respond ONLY with a valid JSON:
         {
           "direction": "LONG (Buy) or SHORT (Sell) or WAIT (Neutral)",
-          "emoji": "🟢 for long, 🔴 for short, ⚪ for wait",
+          "emoji": "🟢 or 🔴 or ⚪",
           "entry": "Strictly the number provided",
           "tp1": "Strictly the number provided",
           "tp2": "Strictly the number provided",
@@ -312,10 +292,9 @@ async (conn, mek, m, { reply, args }) => {
           "leverage": "Strictly the leverage provided",
           "margin": "Strictly the margin provided",
           "risk": "Strictly the risk provided",
-          "confidence": "e.g., 85%",
-          "trend": "Explain in proper Sinhala alphabet.",
-          "sentiment": "Explain in proper Sinhala alphabet.",
-          "momentum": "Explain in proper Sinhala alphabet."
+          "confidence": "e.g., 90%",
+          "trend": "Explain trend in proper Sinhala alphabet.",
+          "smc_summary": "Explain OB, VWAP & Fakeouts in proper Sinhala alphabet."
         }`;
 
         const groqUrl = 'https://api.groq.com/openai/v1/chat/completions';
@@ -335,7 +314,7 @@ async (conn, mek, m, { reply, args }) => {
 ╚═══════════════════════════╝
 
 🪙 Coin: #${coin.replace('USDT', '')} / USDT
-⏱️ Timeframe: ${timeframe} | 1H | 4H (Multi-Timeframe Synced)
+⏱️ Session: ${killzone}
 
  *🎯 Trade Setup* 📉 Direction: ${data.direction} ${data.emoji}
 
@@ -353,10 +332,9 @@ Risk/Reward (RRR): ${data.rrr}
 🛡️ Max Risk Amount: ${data.risk}
 Confidence: ${data.confidence} 🔥
 
-*📊 Market Analysis*
+*📊 Institutional Analysis*
 Trend: ${data.trend}
-Sentiment: ${data.sentiment}
-Momentum: ${data.momentum}
+Smart Money & Volume: ${data.smc_summary}
 
 ⚡ සටහන: ඔබේ ප්‍රාග්ධනය .margin මගින් යාවත්කාලීන කරන්න.
 📌 Track කිරීමට .track ලෙස Reply කරන්න.
@@ -367,7 +345,7 @@ Momentum: ${data.momentum}
     } catch (e) { await reply('❌ Error: Analysis ක්‍රියාවලියේ දෝෂයක්. නැවත උත්සාහ කරන්න.'); console.log(e); }
 });
 
-// ================== TRACK COMMAND (කිසිම වෙනසක් නැත) ==================
+// ================== TRACK COMMAND ==================
 cmd({
     pattern: "track",
     desc: "Save and track a crypto trade",
