@@ -51,12 +51,10 @@ async (conn, mek, m, { reply, args }) => {
         const ext1618 = parseFloat(marketSMC.ext1618);
         const ext2618 = parseFloat(marketSMC.ext2618);
 
-        // 🛠️ Fixed Spot Math
         const spotEntry = fib618.toFixed(2);
         const spotTP1 = res.toFixed(2); 
         const spotTP2 = ext1618.toFixed(2);
         const spotTP3 = ext2618.toFixed(2);
-        // අනිවාර්යයෙන්ම Entry එකට වඩා පල්ලෙහායින් SL පිහිටුවීම
         const spotSL = (parseFloat(spotEntry) - (atrVal * 2.0)).toFixed(2);
 
         const risk = Math.abs(parseFloat(spotEntry) - parseFloat(spotSL));
@@ -88,7 +86,7 @@ async (conn, mek, m, { reply, args }) => {
 
         CRITICAL LANGUAGE RULES:
         1. Write explanations STRICTLY using the Sinhala alphabet. DO NOT use Singlish.
-        2. 🛑 STRICT RULE: DO NOT translate technical acronyms/terms into Sinhala. Keep terms like VWAP, MACD, RSI, Order Block, Breakout, Fakeout, SMC EXACTLY in English within the Sinhala sentence. Example: "මිල VWAP අගයට වඩා ඉහළින් පවතී."
+        2. 🛑 STRICT RULE: DO NOT translate technical acronyms/terms into Sinhala. Keep terms like VWAP, MACD, RSI, Order Block, Breakout, Fakeout, SMC EXACTLY in English within the Sinhala sentence. 
 
         Respond ONLY with a valid JSON:
         {
@@ -175,6 +173,10 @@ async (conn, mek, m, { reply, args }) => {
         const currentCandles = await binance.getKlineData(coin, timeframe);
         const orderBook = await binance.getOrderBook(coin);
         const fng = await binance.getFearAndGreed();
+        
+        // 👈 අලුත් Liquidation Data ගන්න කෑල්ල මෙන්න
+        const liqData = await binance.getLiquidationData(coin);
+        
         const currentPrice = parseFloat(currentCandles[currentCandles.length - 1][4]).toFixed(2);
         
         const rsi = indicators.calculateRSI(currentCandles);
@@ -194,7 +196,6 @@ async (conn, mek, m, { reply, args }) => {
         const ext2618 = parseFloat(marketSMC.ext2618);
         const extMinus1618 = parseFloat(marketSMC.extMinus1618);
 
-        // 🛠️ Fixed LONG Math (SL must be below Entry)
         const longEntry = fib618.toFixed(2); 
         const longTP1 = res.toFixed(2);
         const longTP2 = ext1618.toFixed(2);
@@ -203,7 +204,6 @@ async (conn, mek, m, { reply, args }) => {
         const longRisk = Math.abs(parseFloat(longEntry) - parseFloat(longSL));
         const rrrLong = longRisk > 0 ? ((parseFloat(longTP2) - parseFloat(longEntry)) / longRisk).toFixed(2) : "0.00";
 
-        // 🛠️ Fixed SHORT Math (SL must be above Entry)
         const shortEntry = res.toFixed(2); 
         const shortTP1 = fib618.toFixed(2);
         const shortTP2 = sup.toFixed(2);
@@ -238,6 +238,7 @@ async (conn, mek, m, { reply, args }) => {
         [DATA]
         - TA: VWAP=${vwap} | Breakout=${breakout} | RSI=${rsi} | MACD=${macd}
         - SMC: ChoCH=${marketSMC.choch} | Bull OB=${marketSMC.bullishOB} | Bear OB=${marketSMC.bearishOB}
+        - Liquidation: Sentiment=${liqData.sentiment}
 
         CRITICAL MATH RULES:
         If LONG: entry: "${longEntry}", tp1: "${longTP1}", tp2: "${longTP2}", tp3: "${longTP3}", sl: "${longSL}", rrr: "1:${rrrLong}", leverage: "${longLevText}", margin: "${longMarginText}", risk: "${riskText}"
@@ -246,7 +247,7 @@ async (conn, mek, m, { reply, args }) => {
 
         CRITICAL LANGUAGE RULES:
         1. Write explanations STRICTLY using the Sinhala alphabet.
-        2. 🛑 DO NOT translate technical acronyms/terms (VWAP, MACD, RSI, Order Block, Breakout, SMC). Keep them EXACTLY in English within the Sinhala sentences. Example: "මිල VWAP අගයට වඩා ඉහළින් පවතී."
+        2. 🛑 DO NOT translate technical acronyms/terms (VWAP, MACD, RSI, Order Block, Breakout, SMC). Keep them EXACTLY in English within the Sinhala sentences. 
 
         Respond ONLY with valid JSON:
         {
@@ -263,7 +264,7 @@ async (conn, mek, m, { reply, args }) => {
           "risk": "Strictly the risk provided",
           "confidence": "e.g., 90%",
           "trend": "Explain trend in Sinhala.",
-          "smc_summary": "Explain OB, VWAP & Fakeouts in Sinhala (keeping acronyms in English)."
+          "smc_summary": "Explain OB, VWAP & Fakeouts in Sinhala."
         }`;
 
         const groqUrl = 'https://api.groq.com/openai/v1/chat/completions';
@@ -301,6 +302,7 @@ Confidence: ${data.confidence} 🔥
 *📊 Institutional Analysis*
 Trend: ${data.trend}
 Smart Money & Volume: ${data.smc_summary}
+⚠️ Liquidation Risk: ${liqData.sentiment}
 
 ⚡ සටහන: ඔබේ ප්‍රාග්ධනය .margin මගින් යාවත්කාලීන කරන්න.
 📌 Track කිරීමට .track ලෙස Reply කරන්න.
