@@ -6,11 +6,10 @@ const binance = require('../lib/binance');
 const indicators = require('../lib/indicators');
 const smc = require('../lib/smartmoney');
 
-// ================== FUTURES COMMAND ==================
 cmd({
     pattern: "future",
     alias: ["futures"],
-    desc: "Ultimate Futures AI with VWAP, OB & Liquidation Data",
+    desc: "Ultimate Futures AI with Dynamic Strict Mode",
     category: "crypto",
     react: "🔴",
     filename: __filename
@@ -41,6 +40,7 @@ async (conn, mek, m, { reply, args }) => {
         
         const marketSMC = smc.analyzeSMC(currentCandles);
         const userMargin = await db.getMargin(m.sender) || 0;
+        const settings = await db.getSettings(); // 👈 Settings කියවන තැන
 
         const atrVal = parseFloat(atr);
         const fib618 = parseFloat(marketSMC.fib618);
@@ -86,6 +86,11 @@ async (conn, mek, m, { reply, args }) => {
             longLevText = "Set .margin"; shortLevText = "Set .margin";
         }
 
+        // 👈 අලුත් Strict Mode ලොජික් එක මෙන්න
+        let strictRule = settings.strictMode 
+            ? "If Fakeout detected or bad Risk, output WAIT."
+            : "Even if a Fakeout or High Liquidation Risk is detected, IF there is a valid technical Entry, you MUST output the EXACT LONG/SHORT targets (entry, tp, sl). HOWEVER, you MUST lower the confidence to below 50% and include a STRONG WARNING starting with '⚠️ AVOID / HIGH RISK:' inside the 'smc_summary'. Only output WAIT if there is absolutely no mathematical entry point.";
+
         const prompt = `You are a Master Crypto AI. Analyze ${coin} for FUTURES.
         Current Price: $${currentPrice} | Session: ${marketSMC.killzone}
         
@@ -97,7 +102,7 @@ async (conn, mek, m, { reply, args }) => {
         CRITICAL MATH RULES:
         If LONG: entry: "${longEntry}", tp1: "${longTP1}", tp2: "${longTP2}", tp3: "${longTP3}", sl: "${longSL}", rrr: "1:${rrrLong}", leverage: "${longLevText}", margin: "${longMarginText}", risk: "${riskText}"
         If SHORT: entry: "${shortEntry}", tp1: "${shortTP1}", tp2: "${shortTP2}", tp3: "${shortTP3}", sl: "${shortSL}", rrr: "1:${rrrShort}", leverage: "${shortLevText}", margin: "${shortMarginText}", risk: "${riskText}"
-        If Fakeout detected, output WAIT.
+        ${strictRule}
 
         CRITICAL LANGUAGE RULES:
         1. Write explanations STRICTLY using the Sinhala alphabet.
@@ -129,6 +134,11 @@ async (conn, mek, m, { reply, args }) => {
 
         let data = JSON.parse(aiRes.data.choices[0].message.content.match(/\{[\s\S]*\}/)[0]);
 
+        let trackMsg = "";
+        if (data.direction !== "WAIT" && data.direction !== "HOLD") {
+            trackMsg = `\n📌 Track කිරීමට .track ලෙස Reply කරන්න.\n[TARGETS|ENTRY:${String(data.entry).replace(/,/g, '')}|TP:${String(data.tp2).replace(/,/g, '')}|SL:${String(data.sl).replace(/,/g, '')}]`;
+        }
+
         const outMsg = `
 ╔═══════════════════════════╗
 ║ 🔴 *PRO FUTURES ANALYSIS* ║
@@ -158,12 +168,9 @@ Trend: ${data.trend}
 Smart Money & Volume: ${data.smc_summary}
 ⚠️ Liquidation Risk: ${liqData.sentiment}
 
-⚡ සටහන: ඔබේ ප්‍රාග්ධනය .margin මගින් යාවත්කාලීන කරන්න.
-📌 Track කිරීමට .track ලෙස Reply කරන්න.
-[TARGETS|ENTRY:${String(data.entry).replace(/,/g, '')}|TP:${String(data.tp2).replace(/,/g, '')}|SL:${String(data.sl).replace(/,/g, '')}]`;
+⚡ සටහන: ඔබේ ප්‍රාග්ධනය .margin මගින් යාවත්කාලීන කරන්න.${trackMsg}`;
         
         await reply(outMsg.trim());
         await m.react('✅');
     } catch (e) { await reply('❌ Error: Analysis ක්‍රියාවලියේ දෝෂයක්.'); }
 });
-

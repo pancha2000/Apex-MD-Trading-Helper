@@ -27,9 +27,13 @@ async (conn, mek, m, { reply }) => {
         
         msg += `*3. Trend Filter:* ${s.trendFilter ? '✅ ON' : '❌ OFF'}\n`;
         msg += `   _(මාකට් එක Extreme Fear (දැඩි අවදානම්) නම් trades ලබාදීම නවතයි)_\n\n`;
+
+        // 🚀 අලුතින් එකතු කළ Strict Mode කෑල්ල
+        msg += `*4. Strict Mode:* ${s.strictMode ? '✅ ON' : '❌ OFF'}\n`;
+        msg += `   _(අවදානම් අවස්ථාවලදී බොරු ටාගට් නොදී 'WAIT' තීරණය ගනී)_\n\n`;
         
         msg += `> 📌 *වෙනස් කිරීමට:* ${config.PREFIX}set <අංකය> <on/off>\n`;
-        msg += `> *උදා:* ${config.PREFIX}set 1 on`;
+        msg += `> *උදා:* ${config.PREFIX}set 4 off`;
         
         await reply(msg);
     } catch (e) { await reply('❌ Error: ' + e.message); }
@@ -46,7 +50,7 @@ cmd({
 },
 async (conn, mek, m, { reply, args }) => {
     try {
-        if (!args[0] || !args[1]) return await reply(`❌ කරුණාකර නිවැරදිව ලබා දෙන්න.\n*උදා:* ${config.PREFIX}set 1 on`);
+        if (!args[0] || !args[1]) return await reply(`❌ කරුණාකර නිවැරදිව ලබා දෙන්න.\n*උදා:* ${config.PREFIX}set 4 off`);
         
         const num = args[0];
         const state = args[1].toLowerCase() === 'on';
@@ -57,7 +61,8 @@ async (conn, mek, m, { reply, args }) => {
         if (num === '1') { updateData.autoSignal = state; featureName = "Auto Signals"; }
         else if (num === '2') { updateData.trailingSl = state; featureName = "Trailing SL"; }
         else if (num === '3') { updateData.trendFilter = state; featureName = "Trend Filter"; }
-        else return await reply('❌ වැරදි අංකයකි! 1, 2 හෝ 3 භාවිතා කරන්න.');
+        else if (num === '4') { updateData.strictMode = state; featureName = "Strict Mode"; } // 👈 අලුත් Setting ලොජික් එක
+        else return await reply('❌ වැරදි අංකයකි! 1, 2, 3 හෝ 4 භාවිතා කරන්න.');
 
         await db.updateSettings(updateData);
         await reply(`✅ *${featureName}* පහසුකම සාර්ථකව ${state ? 'ON' : 'OFF'} කරන ලදී!`);

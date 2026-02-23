@@ -8,7 +8,7 @@ const smc = require('../lib/smartmoney');
 
 cmd({
     pattern: "spot",
-    desc: "Ultimate Spot AI with VWAP, OB, Breakouts & Margin sizing",
+    desc: "Ultimate Spot AI with Dynamic Strict Mode",
     category: "crypto",
     react: "🟢",
     filename: __filename
@@ -43,6 +43,7 @@ async (conn, mek, m, { reply, args }) => {
         
         const marketSMC = smc.analyzeSMC(currentCandles);
         const userMargin = await db.getMargin(m.sender) || 0;
+        const settings = await db.getSettings(); // 👈 Settings කියවන තැන
         
         const atrVal = parseFloat(atr);
         const fib618 = parseFloat(marketSMC.fib618);
@@ -71,6 +72,11 @@ async (conn, mek, m, { reply, args }) => {
             spotAllocText = "Set .margin"; riskText = "Set .margin";
         }
 
+        // 👈 අලුත් Strict Mode ලොජික් එක මෙන්න
+        let strictRule = settings.strictMode 
+            ? "If Fakeout detected or bad Risk, output WAIT."
+            : "Even if a Fakeout is detected, IF there is a valid technical Entry, you MUST output the EXACT targets (entry, tp, sl). HOWEVER, you MUST lower the confidence to below 50% and include a STRONG WARNING starting with '⚠️ AVOID / HIGH RISK:' inside the 'smc_summary'. Only output WAIT if there is absolutely no mathematical entry point.";
+
         const prompt = `You are a Master Institutional Crypto Spot Trader. Analyze ${coin} for SPOT TRADING.
         Current Price: $${currentPrice} | Active Session: ${marketSMC.killzone}
         
@@ -81,11 +87,11 @@ async (conn, mek, m, { reply, args }) => {
 
         CRITICAL MATH RULES:
         If BUY, output EXACTLY: entry: "${spotEntry}", tp1: "${spotTP1}", tp2: "${spotTP2}", tp3: "${spotTP3}", sl: "${spotSL}", rrr: "1:${rrr}", allocation: "${spotAllocText}", riskAmt: "${riskText}"
-        If Fakeout detected or bad Risk, output WAIT.
+        ${strictRule}
 
         CRITICAL LANGUAGE RULES:
         1. Write explanations STRICTLY using the Sinhala alphabet. DO NOT use Singlish.
-        2. 🛑 STRICT RULE: DO NOT translate technical acronyms/terms into Sinhala. Keep terms like VWAP, MACD, RSI, Order Block, Breakout, Fakeout, SMC EXACTLY in English within the Sinhala sentence.
+        2. 🛑 STRICT RULE: DO NOT translate technical acronyms/terms into Sinhala. Keep terms like VWAP, MACD, RSI, Order Block, Breakout, Fakeout, SMC EXACTLY in English within the Sinhala sentence. 
 
         Respond ONLY with a valid JSON:
         {
@@ -111,6 +117,11 @@ async (conn, mek, m, { reply, args }) => {
         }, { headers: { 'Authorization': `Bearer ${config.GROQ_API}`, 'Content-Type': 'application/json' } });
 
         let data = JSON.parse(aiRes.data.choices[0].message.content.match(/\{[\s\S]*\}/)[0]);
+
+        let trackMsg = "";
+        if (data.direction !== "WAIT" && data.direction !== "HOLD") {
+            trackMsg = `\n📌 Track කිරීමට .track ලෙස Reply කරන්න.\n[TARGETS|ENTRY:${String(data.entry).replace(/,/g, '')}|TP:${String(data.tp2).replace(/,/g, '')}|SL:${String(data.sl).replace(/,/g, '')}]`;
+        }
 
         const outMsg = `
 ╔═══════════════════════════╗
@@ -139,9 +150,7 @@ Confidence: ${data.confidence} 🔥
 Trend: ${data.trend}
 Smart Money & Volume: ${data.smc_summary}
 
-⚡ සටහන: ඔබේ ප්‍රාග්ධනය .margin මගින් යාවත්කාලීන කරන්න.
-📌 Track කිරීමට .track ලෙස Reply කරන්න.
-[TARGETS|ENTRY:${String(data.entry).replace(/,/g, '')}|TP:${String(data.tp2).replace(/,/g, '')}|SL:${String(data.sl).replace(/,/g, '')}]`;
+⚡ සටහන: ඔබේ ප්‍රාග්ධනය .margin මගින් යාවත්කාලීන කරන්න.${trackMsg}`;
         
         await reply(outMsg.trim());
         await m.react('✅');
