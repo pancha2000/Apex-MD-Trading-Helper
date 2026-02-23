@@ -132,7 +132,11 @@ async (conn, mek, m, { reply, args }) => {
             messages: [{ role: "user", content: prompt }]
         }, { headers: { 'Authorization': `Bearer ${config.GROQ_API}`, 'Content-Type': 'application/json' } });
 
-        let data = JSON.parse(aiRes.data.choices[0].message.content.match(/\{[\s\S]*\}/)[0]);
+        const rawContent = aiRes.data.choices[0].message.content;
+        // Markdown code blocks (```json ... ```) ඉවත් කිරීම සහ JSON extract කිරීම
+        const jsonMatch = rawContent.replace(/```(?:json)?\n?/g, '').match(/\{[\s\S]*\}/);
+        if (!jsonMatch) throw new Error(`AI invalid JSON response: ${rawContent.substring(0, 200)}`);
+        let data = JSON.parse(jsonMatch[0]);
 
         let trackMsg = "";
         if (data.direction !== "WAIT" && data.direction !== "HOLD") {
@@ -172,5 +176,8 @@ Smart Money & Volume: ${data.smc_summary}
         
         await reply(outMsg.trim());
         await m.react('✅');
-    } catch (e) { await reply('❌ Error: Analysis ක්‍රියාවලියේ දෝෂයක්.'); }
+    } catch (e) { 
+        console.error('❌ Future Analysis Error:', e.message || e);
+        await reply(`❌ Error: Analysis ක්‍රියාවලියේ දෝෂයක්.\n🔍 සටහන: ${e.message || 'නොදන්නා දෝෂයක්'}`);
+    }
 });
