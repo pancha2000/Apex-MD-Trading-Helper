@@ -2,73 +2,71 @@ const { cmd } = require('../lib/commands');
 const config = require('../config');
 const binance = require('../lib/binance');
 const indicators = require('../lib/indicators');
-const smc = require('../lib/smartmoney');
 
-// 📌 Default Coins List
-let scanList = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOGEUSDT', 'DOTUSDT'];
+// 📌 ප්‍රධාන කොයින්ස් ලැයිස්තුව
+let scanList = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOGEUSDT', 'INJUSDT', 'SUIUSDT'];
 
 let scanIntervalId = null; 
 let isScanning = false;
 
-// ස්කෑන් කිරීමේ ක්‍රියාවලිය (අලුත් කරන ලදී)
-async function performScan(conn, jid, timeframe = '15m', isFirstRun = false) {
+// 🔄 පසුබිමෙන් දුවන Top-Down Scan ක්‍රියාවලිය
+async function performAutoScan(conn, jid, timeframe = '15m', isFirstRun = false) {
     try {
         let alerts = [];
         
         for (let coin of scanList) {
-            // දත්ත ලබාගැනීම
-            const candles = await binance.getKlineData(coin, timeframe, 50);
-            const currentPrice = parseFloat(candles[candles.length - 1][4]);
-            
-            const rsi = parseFloat(indicators.calculateRSI(candles));
-            const pattern = indicators.checkCandlePattern(candles);
-            const marketSMC = smc.analyzeSMC(candles);
+            try {
+                const candles15m = await binance.getKlineData(coin, timeframe, 200);
+                const candles1h = await binance.getKlineData(coin, '1h', 100);
+                const candles4h = await binance.getKlineData(coin, '4h', 100);
 
-            let signal = null;
+                const currentPrice = parseFloat(candles15m[candles15m.length - 1][4]);
 
-            // 1. Oversold + Bullish Pattern
-            if (rsi < 35 && pattern.includes('🟢')) {
-                signal = 'LONG 🟢';
-            }
-            // 2. Overbought + Bearish Pattern
-            else if (rsi > 65 && pattern.includes('🔴')) {
-                signal = 'SHORT 🔴';
-            }
-            
-            // 3. Golden Pocket (0.618 Fib) අසල නම්
-            const fib618 = parseFloat(marketSMC.fib618);
-            const diffPercent = Math.abs(currentPrice - fib618) / fib618 * 100;
-            if (diffPercent < 0.5 && !signal) { 
-                signal = 'WATCH ⚠️ (Near Fib 0.618)'; 
-            }
+                // 4H & 1H Trend
+                const ema50_4h = parseFloat(indicators.calculateEMA(candles4h, 50));
+                const trend4H = parseFloat(candles4h[candles4h.length - 1][4]) > ema50_4h ? "UP" : "DOWN";
+                const ema50_1h = parseFloat(indicators.calculateEMA(candles1h, 50));
+                const trend1H = parseFloat(candles1h[candles1h.length - 1][4]) > ema50_1h ? "UP" : "DOWN";
 
-            if (signal) {
-                let cleanCoin = coin.replace('USDT', '');
-                alerts.push(`🪙 *${cleanCoin}* - ${signal} (RSI: ${rsi})`);
-            }
+                // 15m Entry
+                const ema200_15m = parseFloat(indicators.calculateEMA(candles15m, 200));
+                const ema50_15m = parseFloat(indicators.calculateEMA(candles15m.slice(-50), 50));
+                const rsi_15m = parseFloat(indicators.calculateRSI(candles15m.slice(-50)));
+
+                // 🟢 LONG ALERTS
+                if (trend4H === "UP" && trend1H === "UP" && currentPrice > ema200_15m) {
+                    let diffFromEma50 = Math.abs(currentPrice - ema50_15m) / ema50_15m;
+                    if (diffFromEma50 < 0.003 && rsi_15m < 50) {
+                        alerts.push(`🟢 *${coin.replace('USDT', '')}* - LONG SETUP\n   📍 Price: $${currentPrice.toFixed(2)}\n   🎯 Entry Zone: $${ema50_15m.toFixed(2)}\n   🤖 Check: ${config.PREFIX}future ${coin.replace('USDT', '')} 15m`);
+                        continue;
+                    }
+                }
+
+                // 🔴 SHORT ALERTS
+                if (trend4H === "DOWN" && trend1H === "DOWN" && currentPrice < ema200_15m) {
+                    let diffFromEma50 = Math.abs(currentPrice - ema50_15m) / ema50_15m;
+                    if (diffFromEma50 < 0.003 && rsi_15m > 50) {
+                        alerts.push(`🔴 *${coin.replace('USDT', '')}* - SHORT SETUP\n   📍 Price: $${currentPrice.toFixed(2)}\n   🎯 Entry Zone: $${ema50_15m.toFixed(2)}\n   🤖 Check: ${config.PREFIX}future ${coin.replace('USDT', '')} 15m`);
+                        continue;
+                    }
+                }
+            } catch (err) { console.log(`AutoScan Error on ${coin}:`, err.message); }
         }
 
-        // අවස්ථා හමුවුණා නම් Group එකට මැසේජ් එක යැවීම
         if (alerts.length > 0) {
-            const outMsg = `🚨 *MARKET ALERTS (${timeframe})* 🚨\n\n` + alerts.join('\n');
+            let outMsg = `🚨 *HIGH PROBABILITY ALERTS* 🚨\n\n` + alerts.join('\n\n');
             await conn.sendMessage(jid, { text: outMsg });
-        } 
-        // පළමු ස්කෑන් එකේදී මුකුත්ම හමුවුණේ නැත්නම් ඒ බව දැනුම් දීම
-        else if (isFirstRun) {
-            await conn.sendMessage(jid, { text: `✅ *පළමු ස්කෑන් කිරීම අවසන්!* (${timeframe})\n\nමේ මොහොතේ කිසිදු Coin එකක පැහැදිලි Trade Setup එකක් හමුවුණේ නැත. මම දිගටම පසුබිමෙන් මාකට් එක අධීක්ෂණය කරමි... 🔍` });
+        } else if (isFirstRun) {
+            await conn.sendMessage(jid, { text: `✅ *Auto Scanner සක්‍රීයයි!* (${timeframe})\n\nදැනට MTF Trend ගැළපෙන Setups කිසිවක් නොමැත. මම පසුබිමෙන් පරීක්ෂා කරමින් සිටිමි... 🔍` });
         }
 
-    } catch (error) {
-        // මොකක් හරි Error එකක් ආවොත් ඒක චැට් එකටම දානවා
-        await conn.sendMessage(jid, { text: `❌ *Scanner Error:* ${error.message}` });
-        console.log("Scanner Error:", error.message);
-    }
+    } catch (error) { console.log("AutoScanner Main Error:", error.message); }
 }
 
 // ================== AUTOSCAN COMMAND ==================
 cmd({
     pattern: "autoscan",
-    desc: "Manage Auto Scanner & Coin List",
+    desc: "Background Auto Scanner for Sniper Setups",
     category: "crypto",
     react: "🔍",
     filename: __filename
@@ -84,55 +82,29 @@ async (conn, mek, m, { reply, args }) => {
     }
 
     if (action === 'on') {
-        if (isScanning) return reply("⚠️ Auto Scanner දැනටමත් ON කර ඇත. වෙනස් කිරීමට පළමුව '.autoscan off' මගින් OFF කරන්න.");
+        if (isScanning) return reply("⚠️ Auto Scanner දැනටමත් ON කර ඇත.");
         
         let intervalMinutes = args[1] ? parseInt(args[1]) : 15;
-        if (isNaN(intervalMinutes) || intervalMinutes < 2) return reply("❌ කරුණාකර නිවැරදි විනාඩි ගණනක් ලබා දෙන්න. \nඋදා: .autoscan on 15 15m");
+        if (isNaN(intervalMinutes) || intervalMinutes < 2) return reply("❌ කරුණාකර නිවැරදි විනාඩි ගණනක් ලබා දෙන්න. \nඋදා: .autoscan on 15");
 
-        // මෙහිදී m.chat වෙනුවට සමහරවිට mek.chat අවශ්‍ය විය හැක, නමුත් සාමාන්‍යයෙන් m.chat හෝ m.key.remoteJid ක්‍රියා කරයි.
         const targetJid = m.chat || mek.key?.remoteJid || m.key?.remoteJid;
-        let timeframe = args[2] ? args[2].toLowerCase() : '15m'; 
+        let timeframe = '15m'; // Default to 15m for Sniper
 
         isScanning = true;
-        reply(`✅ *Auto Scanner ON කරන ලදී!*\n\n⏱️ පරතරය: විනාඩි ${intervalMinutes}\n📊 Timeframe: ${timeframe}\n🪙 Coins: ${scanList.length}\n\n(පළමු Scan එක දැන් ආරම්භ වේ. කරුණාකර රැඳී සිටින්න...)`);
+        reply(`✅ *Auto Scanner ON කරන ලදී!*\n\n⏱️ සෑම විනාඩි ${intervalMinutes} කට වරක්ම කොයින් ${scanList.length} ක් MTF අනුසාරයෙන් පරීක්ෂා කෙරේ. (රැඳී සිටින්න...)`);
         
-        // පළමු ස්කෑන් එක (isFirstRun = true)
-        await performScan(conn, targetJid, timeframe, true);
+        // පළමු ස්කෑන් එක
+        await performAutoScan(conn, targetJid, timeframe, true);
 
         // දිගටම ස්කෑන් කිරීම
         scanIntervalId = setInterval(async () => {
-            await performScan(conn, targetJid, timeframe, false);
+            await performAutoScan(conn, targetJid, timeframe, false);
         }, intervalMinutes * 60 * 1000);
 
         return;
     }
 
-    if (action === 'add') {
-        if (!args[1]) return reply("❌ කරුණාකර Coin එකක් ලබා දෙන්න. \nඋදා: .autoscan add FET");
-        let newCoin = args[1].toUpperCase();
-        if (!newCoin.endsWith('USDT')) newCoin += 'USDT';
-        if (scanList.includes(newCoin)) return reply(`⚠️ ${newCoin} දැනටමත් Scanner ලිස්ට් එකේ තියෙනවා!`);
-        scanList.push(newCoin);
-        return reply(`✅ *${newCoin}* සාර්ථකව Scanner ලිස්ට් එකට එකතු කළා!`);
-    }
+    if (action === 'list') return reply(`📋 *Scanner Coins List (${scanList.length})*\n\n` + scanList.map(c => `🔸 ${c.replace('USDT', '')}`).join('\n'));
 
-    if (action === 'remove') {
-        if (!args[1]) return reply("❌ කරුණාකර Coin එකක් ලබා දෙන්න. \nඋදා: .autoscan remove FET");
-        let delCoin = args[1].toUpperCase();
-        if (!delCoin.endsWith('USDT')) delCoin += 'USDT';
-        const index = scanList.indexOf(delCoin);
-        if (index > -1) {
-            scanList.splice(index, 1);
-            return reply(`🗑️ *${delCoin}* Scanner ලිස්ට් එකෙන් ඉවත් කළා!`);
-        } else {
-            return reply(`⚠️ ${delCoin} ලිස්ට් එකේ නැහැ!`);
-        }
-    }
-
-    if (action === 'list') {
-        let listMsg = `📋 *Scanner Coins List (${scanList.length})*\n\n` + scanList.map(c => `🔸 ${c.replace('USDT', '')}`).join('\n');
-        return reply(listMsg);
-    }
-
-    reply(`❌ වැරදි කමාන්ඩ් එකක්!\n\n*භාවිතා කරන ආකාරය:*\n🟢 ON කිරීමට: .autoscan on 15 15m\n🔴 OFF කිරීමට: .autoscan off\n➕ Coin එකතු කිරීමට: .autoscan add WIF\n➖ ඉවත් කිරීමට: .autoscan remove WIF\n📋 ලැයිස්තුව: .autoscan list`);
+    reply(`❌ වැරදි කමාන්ඩ් එකක්!\n\n*භාවිතා කරන ආකාරය:*\n🟢 ON කිරීමට: .autoscan on 15\n🔴 OFF කිරීමට: .autoscan off\n📋 ලැයිස්තුව: .autoscan list`);
 });
