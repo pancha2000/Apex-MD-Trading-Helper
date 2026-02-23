@@ -2,11 +2,10 @@ const { cmd } = require('../lib/commands');
 const config = require('../config');
 const binance = require('../lib/binance');
 const indicators = require('../lib/indicators');
-const smc = require('../lib/smartmoney');
 
 cmd({
     pattern: "backtest",
-    desc: "Test Long & Short strategy on last 1000 candles",
+    desc: "Test Pullback Strategy on last 1000 candles",
     category: "crypto",
     react: "⏪",
     filename: __filename
@@ -20,7 +19,7 @@ async (conn, mek, m, { reply, args }) => {
         let timeframe = args[1] ? args[1].toLowerCase() : '15m'; 
 
         await m.react('⏳');
-        await reply(`⏳ *${coin} හි දියුණු අතීත දත්ත පරීක්ෂාව (Backtesting) ආරම්භ කෙරේ...*\n(Long සහ Short අවස්ථා දෙකම පරීක්ෂා වේ)`);
+        await reply(`⏳ *${coin} හි යාවත්කාලීන කළ අතීත දත්ත පරීක්ෂාව ආරම්භ කෙරේ...*\n(කරුණාකර රැඳී සිටින්න)`);
 
         let candles;
         try {
@@ -35,42 +34,42 @@ async (conn, mek, m, { reply, args }) => {
 
         let totalTrades = 0, wins = 0, losses = 0, longTrades = 0, shortTrades = 0;
 
-        for (let i = 100; i < candles.length - 20; i++) {
-            let historySlice = candles.slice(i - 100, i);
-            let currentPrice = parseFloat(historySlice[historySlice.length - 1][4]);
+        for (let i = 100; i < candles.length - 30; i++) {
+            let historySlice = candles.slice(i - 50, i);
+            let lastCandle = historySlice[historySlice.length - 1];
+            let currentPrice = parseFloat(lastCandle[4]);
+            let currentLow = parseFloat(lastCandle[3]);
+            let currentHigh = parseFloat(lastCandle[2]);
             
             let rsi = parseFloat(indicators.calculateRSI(historySlice));
             let atr = parseFloat(indicators.calculateATR(historySlice));
             let ema50 = parseFloat(indicators.calculateEMA(historySlice, 50));
-            
-            let marketSMC = smc.analyzeSMC(historySlice);
-            let fib618 = parseFloat(marketSMC.fib618);
-            let res = parseFloat(marketSMC.resistance);
-            let sup = parseFloat(marketSMC.support);
 
-            // 🟢 LONG STRATEGY: මිල EMA50 ට වඩා උඩින්, Fib 618 කිට්ටුව, RSI < 45
-            let isLong = currentPrice > ema50 && Math.abs(currentPrice - fib618) / fib618 < 0.003 && rsi < 45;
+            // 🟢 ලිහිල් කළ LONG නීතිය: Trend එක Up (මිල EMA50 ට උඩින්). හැබැයි මිල EMA50 ලයින් එකේ වැදුණොත් (Pullback) සහ RSI එක 50ට අඩු නම් BUY කරනවා!
+            let isLong = currentPrice > ema50 && currentLow <= (ema50 * 1.002) && rsi < 50;
             
-            // 🔴 SHORT STRATEGY: මිල EMA50 ට වඩා පහළින්, Resistance කිට්ටුව, RSI > 55
-            let isShort = currentPrice < ema50 && Math.abs(currentPrice - res) / res < 0.003 && rsi > 55;
+            // 🔴 ලිහිල් කළ SHORT නීතිය: Trend එක Down (මිල EMA50 ට පල්ලෙහායින්). හැබැයි මිල EMA50 ලයින් එකේ වැදුණොත් සහ RSI එක 50ට වැඩි නම් SELL කරනවා!
+            let isShort = currentPrice < ema50 && currentHigh >= (ema50 * 0.998) && rsi > 50;
 
             if (isLong || isShort) {
                 totalTrades++;
                 let entryPrice = currentPrice;
                 let tp, sl;
 
+                // Risk to Reward Ratio (RRR) = 1:1.5
                 if (isLong) {
                     longTrades++;
-                    tp = entryPrice + (atr * 3); // RRR 1:1.5
-                    sl = entryPrice - (atr * 2);
+                    tp = entryPrice + (atr * 2.5); 
+                    sl = entryPrice - (atr * 1.5);
                 } else {
                     shortTrades++;
-                    tp = entryPrice - (atr * 3); // RRR 1:1.5
-                    sl = entryPrice + (atr * 2);
+                    tp = entryPrice - (atr * 2.5); 
+                    sl = entryPrice + (atr * 1.5);
                 }
                 
                 let tradeWon = false;
-                for (let j = i + 1; j < i + 20 && j < candles.length; j++) {
+                // අනාගත කැන්ඩල්ස් 30ක් ඉස්සරහට චෙක් කරනවා
+                for (let j = i + 1; j < i + 30 && j < candles.length; j++) {
                     let futureHigh = parseFloat(candles[j][2]);
                     let futureLow = parseFloat(candles[j][3]);
 
@@ -82,7 +81,7 @@ async (conn, mek, m, { reply, args }) => {
                         if (futureLow <= tp) { wins++; tradeWon = true; break; }
                     }
                 }
-                i += 10; // Trade එකෙන් පස්සේ කැන්ඩල් 10ක් මඟහරින්න
+                i += 15; // Trade එකක් ගත්තට පස්සේ කැන්ඩල්ස් 15ක් මඟහරින්න (එකම තැන Trades 2ක් නොදාන්න)
             }
         }
 
