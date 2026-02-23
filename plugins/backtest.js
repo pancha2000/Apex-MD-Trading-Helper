@@ -5,7 +5,7 @@ const indicators = require('../lib/indicators');
 
 cmd({
     pattern: "backtest",
-    desc: "Test Pullback Strategy on last 1000 candles",
+    desc: "Sniper Strategy (EMA 200 + Pullback)",
     category: "crypto",
     react: "⏪",
     filename: __filename
@@ -19,7 +19,7 @@ async (conn, mek, m, { reply, args }) => {
         let timeframe = args[1] ? args[1].toLowerCase() : '15m'; 
 
         await m.react('⏳');
-        await reply(`⏳ *${coin} හි යාවත්කාලීන කළ අතීත දත්ත පරීක්ෂාව ආරම්භ කෙරේ...*\n(කරුණාකර රැඳී සිටින්න)`);
+        await reply(`⏳ *${coin} හි "Sniper" අතීත දත්ත පරීක්ෂාව ආරම්භ කෙරේ...*\n(EMA 200 සහ Momentum ෆිල්ටරය සහිතව)`);
 
         let candles;
         try {
@@ -28,35 +28,35 @@ async (conn, mek, m, { reply, args }) => {
             return await reply("❌ Binance වෙතින් දත්ත ලබාගැනීමට නොහැකි විය.");
         }
 
-        if (!candles || candles.length < 500) {
-            return await reply("❌ පරීක්ෂා කිරීමට ප්‍රමාණවත් අතීත දත්ත නොමැත.");
-        }
+        if (!candles || candles.length < 500) return await reply("❌ පරීක්ෂා කිරීමට ප්‍රමාණවත් අතීත දත්ත නොමැත.");
 
         let totalTrades = 0, wins = 0, losses = 0, longTrades = 0, shortTrades = 0;
 
-        for (let i = 100; i < candles.length - 30; i++) {
-            let historySlice = candles.slice(i - 50, i);
+        for (let i = 200; i < candles.length - 30; i++) {
+            let historySlice = candles.slice(i - 200, i); // EMA 200 ගණනයට කැන්ඩල්ස් 200 ක් ඕනේ
             let lastCandle = historySlice[historySlice.length - 1];
             let currentPrice = parseFloat(lastCandle[4]);
             let currentLow = parseFloat(lastCandle[3]);
             let currentHigh = parseFloat(lastCandle[2]);
             
-            let rsi = parseFloat(indicators.calculateRSI(historySlice));
-            let atr = parseFloat(indicators.calculateATR(historySlice));
-            let ema50 = parseFloat(indicators.calculateEMA(historySlice, 50));
+            let rsi = parseFloat(indicators.calculateRSI(historySlice.slice(-50)));
+            let atr = parseFloat(indicators.calculateATR(historySlice.slice(-50)));
+            let ema50 = parseFloat(indicators.calculateEMA(historySlice.slice(-50), 50));
+            let ema200 = parseFloat(indicators.calculateEMA(historySlice, 200)); // 👈 Ultimate Trend Filter
 
-            // 🟢 ලිහිල් කළ LONG නීතිය: Trend එක Up (මිල EMA50 ට උඩින්). හැබැයි මිල EMA50 ලයින් එකේ වැදුණොත් (Pullback) සහ RSI එක 50ට අඩු නම් BUY කරනවා!
-            let isLong = currentPrice > ema50 && currentLow <= (ema50 * 1.002) && rsi < 50;
+            if (!ema200 || !ema50) continue;
+
+            // 🟢 SNIPER LONG: මිල EMA200 ට වඩා ගොඩක් උඩින්, EMA50 ට Pullback වෙනවා, RSI එක 45ට අඩුයි.
+            let isLong = currentPrice > ema200 && currentPrice > ema50 && currentLow <= (ema50 * 1.002) && rsi < 45;
             
-            // 🔴 ලිහිල් කළ SHORT නීතිය: Trend එක Down (මිල EMA50 ට පල්ලෙහායින්). හැබැයි මිල EMA50 ලයින් එකේ වැදුණොත් සහ RSI එක 50ට වැඩි නම් SELL කරනවා!
-            let isShort = currentPrice < ema50 && currentHigh >= (ema50 * 0.998) && rsi > 50;
+            // 🔴 SNIPER SHORT: මිල EMA200 ට වඩා ගොඩක් පල්ලෙහායින්, EMA50 ට Pullback වෙනවා, RSI එක 55ට වැඩියි.
+            let isShort = currentPrice < ema200 && currentPrice < ema50 && currentHigh >= (ema50 * 0.998) && rsi > 55;
 
             if (isLong || isShort) {
                 totalTrades++;
                 let entryPrice = currentPrice;
                 let tp, sl;
 
-                // Risk to Reward Ratio (RRR) = 1:1.5
                 if (isLong) {
                     longTrades++;
                     tp = entryPrice + (atr * 2.5); 
@@ -68,7 +68,6 @@ async (conn, mek, m, { reply, args }) => {
                 }
                 
                 let tradeWon = false;
-                // අනාගත කැන්ඩල්ස් 30ක් ඉස්සරහට චෙක් කරනවා
                 for (let j = i + 1; j < i + 30 && j < candles.length; j++) {
                     let futureHigh = parseFloat(candles[j][2]);
                     let futureLow = parseFloat(candles[j][3]);
@@ -81,7 +80,7 @@ async (conn, mek, m, { reply, args }) => {
                         if (futureLow <= tp) { wins++; tradeWon = true; break; }
                     }
                 }
-                i += 15; // Trade එකක් ගත්තට පස්සේ කැන්ඩල්ස් 15ක් මඟහරින්න (එකම තැන Trades 2ක් නොදාන්න)
+                i += 15; // Trade එකෙන් පස්සේ කැන්ඩල්ස් 15ක් පනිනවා
             }
         }
 
@@ -89,12 +88,12 @@ async (conn, mek, m, { reply, args }) => {
 
         const outMsg = `
 ╔═══════════════════════════╗
-║ ⏪ *PRO BACKTEST RESULTS* ║
+║ 🎯 *SNIPER BACKTEST RESULTS* ║
 ╚═══════════════════════════╝
 
 🪙 Coin: #${coin.replace('USDT', '')} / USDT
 ⏱️ Timeframe: ${timeframe}
-📊 පරීක්ෂා කළ කැන්ඩල්ස්: ${candles.length}
+📊 පරීක්ෂා කළ කැන්ඩල්ස්: 1000
 
 *🎯 Strategy Performance:*
 ▫️ මුළු Trades ගණන: ${totalTrades} (Long: ${longTrades} | Short: ${shortTrades})
@@ -104,12 +103,10 @@ async (conn, mek, m, { reply, args }) => {
 🏆 *Win Rate: ${winRate}%*
 
 ⚡ *නිගමනය:*
-${winRate >= 55 ? "✅ මෙම Strategy එක ඉතා සාර්ථකයි! (Profitable)" : winRate >= 40 ? "⚠️ මධ්‍යම මට්ටමේ සාර්ථකත්වයක්. AI ෆිල්ටරය අනිවාර්යයි." : "❌ මෙහි Win Rate එක අඩුය. AI තීරණ මත පමණක් රඳා පවතින්න."}
+${winRate >= 60 ? "✅ මෙම Strategy එක ඉතා සාර්ථකයි! (High Profit)" : winRate >= 45 ? "⚠️ මධ්‍යම මට්ටමේ සාර්ථකත්වයක්. AI ෆිල්ටරය අනිවාර්යයි." : "❌ මෙහි Win Rate එක අඩුය."}
 `;
         await reply(outMsg.trim());
         await m.react('✅');
 
-    } catch (e) {
-        await reply('❌ Error: Backtesting ක්‍රියාවලියේ දෝෂයක්. ' + e.message);
-    }
+    } catch (e) { await reply('❌ Error: ' + e.message); }
 });
