@@ -49,15 +49,16 @@ async (conn, mek, m, { reply, args }) => {
 
             if (!ema200 || !ema50 || !atr) continue;
 
-            // ✅ FIX: RSI Thresholds - 35/65 (futures.js සමඟ consistent)
+            // ✅ FIX: RSI Thresholds & EMA Pullback Buffer Relaxed
             // Fakeout filter: volume breakout ගත් places skip
             let isFakeout = volBreak.includes("Fakeout");
 
+            // Pullback කලාපය 0.5% දක්වා වැඩි කළා. RSI එක 50 මට්ටමට ගෙනාවා.
             let isLong = currentPrice > ema200 && currentPrice > ema50
-                && currentLow <= (ema50 * 1.002) && rsi < 40 && !isFakeout;
+                && currentLow <= (ema50 * 1.005) && rsi < 50 && !isFakeout;
 
             let isShort = currentPrice < ema200 && currentPrice < ema50
-                && currentHigh >= (ema50 * 0.998) && rsi > 60 && !isFakeout;
+                && currentHigh >= (ema50 * 0.995) && rsi > 50 && !isFakeout;
 
             if (isLong || isShort) {
                 totalTrades++;
@@ -113,8 +114,8 @@ async (conn, mek, m, { reply, args }) => {
 ⚠️ Max Consecutive Loss: ${maxConsecutiveLoss}
 
 *📌 Strategy Rules Used:*
-▫️ Entry: Price > EMA200 + EMA50 Pullback
-▫️ RSI Threshold: Long <40 | Short >60
+▫️ Entry: Price > EMA200 + EMA50 Pullback (Relaxed to 0.5%)
+▫️ RSI Threshold: Long <50 | Short >50
 ▫️ Fakeout Filter: Low Volume Breakout Skip
 ▫️ TP: ATR x2.5 | SL: ATR x1.5
 
