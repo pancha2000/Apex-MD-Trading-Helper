@@ -27,8 +27,9 @@ async (conn, mek, m, { reply, args }) => {
         await reply(`⏳ *${coin} Full Analysis...*\n(MTF + Smart Entry + RRR Filter)`);
 
         // ── Data Fetch ─────────────────────────────────────
-        const currentCandles = await binance.getKlineData(coin, timeframe, 200);
-        const candles5m      = await binance.getKlineData(coin, '5m', 50);   // ✅ Feature 1
+        // ✅ FIX 1: EMA 200 නිවැරදිව ගණනය කිරීම සඳහා කැන්ඩල්ස් 500 ක් ලබා ගැනීම
+        const currentCandles = await binance.getKlineData(coin, timeframe, 500);
+        const candles5m      = await binance.getKlineData(coin, '5m', 50);   
         const candles1H      = await binance.getKlineData(coin, '1h', 60);
         const candles4H      = await binance.getKlineData(coin, '4h', 60);
         const liqData        = await binance.getLiquidationData(coin);
@@ -62,7 +63,7 @@ async (conn, mek, m, { reply, args }) => {
         const atrVal    = parseFloat(atr);
         const direction = mainTrend.includes("Bullish") ? "LONG" : "SHORT";
 
-        // ── ✅ Feature 1: 5m MTF Confirmation ──────────────
+        // ── Feature 1: 5m MTF Confirmation ──────────────
         const mtf5m = indicators.confirmEntry5m(candles5m, direction);
 
         // ── Smart Entry Zone ────────────────────────────────
@@ -82,8 +83,8 @@ async (conn, mek, m, { reply, args }) => {
             const zoneSL = parseFloat(bestEntry.sl);
             const atrSL  = entryPrice - atrVal * 1.5;
             smartSL = (entryPrice - zoneSL) < atrVal * 3 ? zoneSL : atrSL;
-            tp1 = (entryPrice + atrVal * 2.5).toFixed(2);   // ✅ Partial TP1
-            tp2 = (entryPrice + atrVal * 4.0).toFixed(2);   // Main TP
+            tp1 = (entryPrice + atrVal * 2.5).toFixed(2);   
+            tp2 = (entryPrice + atrVal * 4.0).toFixed(2);   
         } else {
             const zoneSL = parseFloat(bestEntry.sl);
             const atrSL  = entryPrice + atrVal * 1.5;
@@ -94,10 +95,13 @@ async (conn, mek, m, { reply, args }) => {
 
         const entryStr = entryPrice.toFixed(2);
         const slStr    = parseFloat(smartSL).toFixed(2);
-        const rrrVal   = Math.abs(parseFloat(tp2) - entryPrice) / Math.abs(entryPrice - parseFloat(slStr));
+        
+        // ✅ FIX 2: Zero Division Risk එක ඉවත් කිරීම
+        const riskAmount = Math.abs(entryPrice - parseFloat(slStr));
+        const rrrVal   = riskAmount > 0 ? (Math.abs(parseFloat(tp2) - entryPrice) / riskAmount) : 0;
         const rrrStr   = rrrVal.toFixed(2);
 
-        // ── ✅ Feature 2: RRR Pre-Filter ────────────────────
+        // ── Feature 2: RRR Pre-Filter ────────────────────
         const settings = await db.getSettings();
         const rrrCheck = indicators.checkRRR(entryStr, tp2, slStr, settings.minRRR || 1.5);
 
@@ -150,13 +154,12 @@ _Strict Mode OFF කිරීමට: ${config.PREFIX}set 4 off_`
             if (direction === 'LONG')  { longScore++;  longR.push("OB Confirmed"); }
             else                       { shortScore++; shortR.push("OB Confirmed"); }
         }
-        // ✅ Feature 1: 5m MTF score
         if (mtf5m.confirmed) {
             if (direction === 'LONG')  { longScore++;  longR.push("5m Aligned ✅"); }
             else                       { shortScore++; shortR.push("5m Aligned ✅"); }
         }
 
-        const maxScore    = 10; // +1 for 5m MTF
+        const maxScore    = 10; 
         const finalScore  = direction === 'LONG' ? longScore : shortScore;
         const finalReasons = (direction === 'LONG' ? longR : shortR).join(', ') || "None";
 

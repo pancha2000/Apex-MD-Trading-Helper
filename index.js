@@ -60,11 +60,13 @@ async function downloadSession() {
     }
 }
 
-// ✅ FIX: isFirstStart flag - session එකවරක් පමණක් download කරයි
+// ✅ FIX: Flags දෙකම Function එකෙන් එළියට (Global Scope එකට) ගත්තා!
+// මේ නිසා බොට් Disconnect වෙලා Reconnect වුණත් මේ අගයන් Reset වෙන්නේ නෑ.
 let isFirstStart = true;
+let isScannerStarted = false;
 
 async function startBot() {
-    // ✅ FIX: Session පළමු සැරේ පමණක් download කරයි - reconnect වෙන සෑම සැරේ නැහැ
+    // Session පළමු සැරේ පමණක් download කරයි
     if (isFirstStart) {
         await downloadSession();
         isFirstStart = false;
@@ -74,7 +76,6 @@ async function startBot() {
     const { version, isLatest } = await fetchLatestBaileysVersion();
     console.log(`🔄 Using WA v${version.join('.')}, isLatest: ${isLatest}`);
 
-    // ✅ FIX: නව socket එකක් හදන විට පරණ listeners ගැටළු නෑ
     const conn = makeWASocket({
         version,
         logger: pino({ level: 'silent' }),
@@ -88,27 +89,30 @@ async function startBot() {
 
     conn.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect } = update;
-
+        
         if (connection === 'close') {
             let reason = lastDisconnect?.error?.output?.statusCode;
             console.log(`⚠️ Connection Closed. Reason: ${reason}`);
-
+            
             if (reason === DisconnectReason.loggedOut || reason === 440 || reason === 401) {
                 console.log('❌ Session Invalid! Generate a NEW Session ID.');
-                // ✅ FIX: process.exit() - platform (Railway/Heroku) restart කරයි
-                // ඒ නිසා listeners accumulate වෙන්නේ නැහැ
                 process.exit(1);
             } else {
                 console.log('🔄 Reconnecting in 5 seconds...');
-                // ✅ FIX: conn destroy කරලා clean reconnect
                 conn.ev.removeAllListeners();
                 setTimeout(startBot, 5000);
             }
         } else if (connection === 'open') {
             console.log('✅ Bot Connected to WhatsApp Successfully!');
-            // බොට් සාර්ථකව WhatsApp වලට සම්බන්ධ වූ විට Scanner එක ආරම්භ කරන්න
-startScanner(conn);
-
+            
+            // ✅ FIX: Scanner එක රන් වෙන්නේ පළමු වතාවට පමණයි! (Multiple Loops හැදෙන්නේ නෑ)
+            if (!isScannerStarted) {
+                console.log('🔄 Starting Background Scanners...');
+                startScanner(conn);
+                isScannerStarted = true;
+            } else {
+                console.log('⚡ Scanner is already running. Reconnected safely.');
+            }
         }
     });
 
