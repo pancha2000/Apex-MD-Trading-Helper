@@ -9,7 +9,7 @@ const smc = require('../lib/smartmoney');
 cmd({
     pattern: "future",
     alias: ["futures"],
-    desc: "Ultimate Futures AI with Sniper Entry & EMA 200",
+    desc: "Ultimate Futures AI with Confluence Scoring",
     category: "crypto",
     react: "🔴",
     filename: __filename
@@ -24,26 +24,22 @@ async (conn, mek, m, { reply, args }) => {
         let timeframe = args[1] ? args[1].toLowerCase() : '15m'; 
 
         await m.react('⏳');
-        await reply(`⏳ *Sniper Confirmations සමඟ විශ්ලේෂණය ආරම්භ කෙරේ...*\n(EMA 200 සහ Market Noise පරීක්ෂා කරමින් පවතී)`);
+        await reply(`⏳ *${coin} හි ගැඹුරු විශ්ලේෂණය ආරම්භ කෙරේ...*\n(Confluence Scoring පරීක්ෂා කරමින් පවතී)`);
 
-        // දත්ත ගැනීම (Candles 200 ක් ගන්නවා EMA 200 හදන්න)
         const currentCandles = await binance.getKlineData(coin, timeframe, 200); 
         const candles1H = await binance.getKlineData(coin, '1h', 60);
         const candles4H = await binance.getKlineData(coin, '4h', 60);
         
-        const fng = await binance.getFearAndGreed();
         const liqData = await binance.getLiquidationData(coin);
         const currentPrice = parseFloat(currentCandles[currentCandles.length - 1][4]).toFixed(2);
         
-        // 🚀 අලුත්: EMA 200 සහ Choppy Market Filter
         const ema200 = parseFloat(indicators.calculateEMA(currentCandles, 200));
         const ema50 = parseFloat(indicators.calculateEMA(currentCandles.slice(-50), 50));
         const ema21 = parseFloat(indicators.calculateEMA(currentCandles.slice(-21), 21));
         
         const mainTrend = currentPrice > ema200 ? "Bullish (Uptrend) 🟢" : "Bearish (Downtrend) 🔴";
-        // EMA 21 සහ 50 ගොඩක් ළඟ නම් (0.15% කට වඩා අඩුවෙන්) ඒක Choppy Market එකක්!
         const isChoppy = Math.abs(ema50 - ema21) / ema50 < 0.0015; 
-        const marketState = isChoppy ? "CHOPPY / SIDEWAYS ⚠️ (DO NOT TRADE)" : "TRENDING 🚀 (SAFE TO TRADE)";
+        const marketState = isChoppy ? "CHOPPY / SIDEWAYS ⚠️" : "TRENDING 🚀";
 
         const ema1H = parseFloat(indicators.calculateEMA(candles1H, 50));
         const ema4H = parseFloat(indicators.calculateEMA(candles4H, 50));
@@ -55,28 +51,63 @@ async (conn, mek, m, { reply, args }) => {
         const atr = indicators.calculateATR(currentCandles.slice(-50));
         const macd = indicators.calculateMACD(currentCandles.slice(-50));
         const vwap = indicators.calculateVWAP(currentCandles.slice(-50));
+        const poc = indicators.calculatePOC(currentCandles.slice(-50)); 
+        const pattern = indicators.checkCandlePattern(currentCandles.slice(-10));
         
         const marketSMC = smc.analyzeSMC(currentCandles.slice(-50));
-        const userMargin = await db.getMargin(m.sender) || 0;
-        const settings = await db.getSettings(); 
 
+        // 🏆 Confluence Scoring System (අලුතින් එකතු කළ කොටස) 🏆
+        let longScore = 0, shortScore = 0;
+        let longReasons = [], shortReasons = [];
+
+        // 1. MTF
+        if (trend4H.includes("Bullish") && trend1H.includes("Bullish")) { longScore++; longReasons.push("MTF Bullish"); }
+        if (trend4H.includes("Bearish") && trend1H.includes("Bearish")) { shortScore++; shortReasons.push("MTF Bearish"); }
+
+        // 2. EMA
+        let diffFromEma50 = Math.abs(currentPrice - ema50) / ema50;
+        if (currentPrice > ema200 && diffFromEma50 < 0.003) { longScore++; longReasons.push("EMA Pullback"); }
+        if (currentPrice < ema200 && diffFromEma50 < 0.003) { shortScore++; shortReasons.push("EMA Pullback"); }
+
+        // 3. SMC
+        if (marketSMC.bullishOB !== "None" || marketSMC.bullishFVG !== "None") { longScore++; longReasons.push("SMC Zones"); }
+        if (marketSMC.bearishOB !== "None" || marketSMC.bearishFVG !== "None") { shortScore++; shortReasons.push("SMC Zones"); }
+
+        // 4. RSI
+        if (rsi < 45) { longScore++; longReasons.push("RSI Oversold"); }
+        if (rsi > 55) { shortScore++; shortReasons.push("RSI Overbought"); }
+
+        // 5. VWAP
+        if (vwap.includes('🟢')) { longScore++; longReasons.push("Above VWAP"); }
+        if (vwap.includes('🔴')) { shortScore++; shortReasons.push("Below VWAP"); }
+
+        // 6. Pattern
+        if (pattern.includes('🟢')) { longScore++; longReasons.push("Candle Pattern"); }
+        if (pattern.includes('🔴')) { shortScore++; shortReasons.push("Candle Pattern"); }
+
+        let finalScore = mainTrend.includes("Bullish") ? longScore : shortScore;
+        let finalReasons = mainTrend.includes("Bullish") ? longReasons.join(', ') : shortReasons.join(', ');
+        if (finalScore === 0) finalReasons = "None matched";
+
+        // Entries & TP/SL
         const atrVal = parseFloat(atr);
-        const fib618 = parseFloat(marketSMC.fib618);
-        const res = parseFloat(marketSMC.resistance);
-        const sup = parseFloat(marketSMC.support);
+        let bestLongEntry = marketSMC.bullishOB !== "None" ? parseFloat(marketSMC.bullishOB.split(' - ')[0].replace('$', '')) : parseFloat(marketSMC.fib618);
+        let bestShortEntry = marketSMC.bearishOB !== "None" ? parseFloat(marketSMC.bearishOB.split(' - ')[0].replace('$', '')) : parseFloat(marketSMC.resistance);
 
-        // Sniper Entries
-        const longEntry = fib618.toFixed(2); 
+        const longEntry = bestLongEntry.toFixed(2); 
         const longTP1 = (parseFloat(longEntry) + (atrVal * 2.5)).toFixed(2);
         const longTP2 = (parseFloat(longEntry) + (atrVal * 4.0)).toFixed(2);
         const longSL = (parseFloat(longEntry) - (atrVal * 1.5)).toFixed(2);
         const rrrLong = ((parseFloat(longTP2) - parseFloat(longEntry)) / (parseFloat(longEntry) - parseFloat(longSL))).toFixed(2);
 
-        const shortEntry = res.toFixed(2); 
+        const shortEntry = bestShortEntry.toFixed(2); 
         const shortTP1 = (parseFloat(shortEntry) - (atrVal * 2.5)).toFixed(2);
         const shortTP2 = (parseFloat(shortEntry) - (atrVal * 4.0)).toFixed(2);
         const shortSL = (parseFloat(shortEntry) + (atrVal * 1.5)).toFixed(2);
         const rrrShort = ((parseFloat(shortEntry) - parseFloat(shortTP2)) / (parseFloat(shortSL) - parseFloat(shortEntry))).toFixed(2);
+
+        const userMargin = await db.getMargin(m.sender) || 0;
+        const settings = await db.getSettings(); 
 
         let longLevText = "N/A", riskText = "N/A", shortLevText = "N/A", marginText = "N/A";
         if (userMargin > 0) {
@@ -88,27 +119,30 @@ async (conn, mek, m, { reply, args }) => {
         } else { longLevText = "Set .margin"; shortLevText = "Set .margin"; }
 
         let strictRule = settings.strictMode 
-            ? "If Market State is CHOPPY, or MTF Trend opposes EMA 200, output WAIT. NEVER long under EMA200. NEVER short above EMA200."
-            : "Even if Choppy, if there is a valid setup, output EXACT targets with a STRONG WARNING below 50% confidence.";
+            ? "If Score is less than 3, or Market is Choppy, output WAIT."
+            : "Even if Score is low, output EXACT targets with a WARNING below 50% confidence.";
 
-        const prompt = `You are a Master Crypto Sniper. Analyze ${coin} FUTURES.
+        const prompt = `You are a Master Crypto AI. Analyze ${coin} FUTURES.
         Current Price: $${currentPrice}
         
+        [CONFLUENCE SCORE: ${finalScore}/6]
+        Passed Confluences: ${finalReasons}
+
         [ULTIMATE DATA]
         - Market State: ${marketState}
-        - 15m EMA 200 Trend: ${mainTrend} (CRITICAL: Never trade against this!)
+        - 15m EMA 200 Trend: ${mainTrend}
         - MTF Trend: ${mtfTrend}
+        - POC: $${poc} | VWAP: ${vwap}
         - FVG: Bull=${marketSMC.bullishFVG} | Bear=${marketSMC.bearishFVG}
-        - TA: VWAP=${vwap} | RSI=${rsi} | MACD=${macd}
-        - SMC: Bull OB=${marketSMC.bullishOB} | Bear OB=${marketSMC.bearishOB}
-        - Sentiment: Liquidation=${liqData.sentiment}
+        - OB: Bull=${marketSMC.bullishOB} | Bear=${marketSMC.bearishOB}
+        - Liquidation: ${liqData.sentiment}
 
         CRITICAL MATH RULES:
         If LONG: entry: "${longEntry}", tp1: "${longTP1}", tp2: "${longTP2}", sl: "${longSL}", rrr: "1:${rrrLong}", leverage: "${longLevText}", margin: "${marginText}", risk: "${riskText}"
         If SHORT: entry: "${shortEntry}", tp1: "${shortTP1}", tp2: "${shortTP2}", sl: "${shortSL}", rrr: "1:${rrrShort}", leverage: "${shortLevText}", margin: "${marginText}", risk: "${riskText}"
         ${strictRule}
 
-        CRITICAL LANGUAGE RULES: Write explanations in Sinhala alphabet. DO NOT translate terms like EMA 200, MTF, Choppy, FVG, OB.
+        CRITICAL LANGUAGE RULES: Write explanations in Sinhala alphabet. Mention the Score ${finalScore}/6 and Passed Confluences.
 
         Respond ONLY with JSON:
         {
@@ -124,8 +158,8 @@ async (conn, mek, m, { reply, args }) => {
           "margin": "Strictly the margin provided",
           "risk": "Strictly the risk provided",
           "confidence": "e.g., 90%",
-          "trend": "Explain EMA 200 & MTF in Sinhala.",
-          "smc_summary": "Explain Market State (Choppy/Trending) & OB/FVG in Sinhala."
+          "trend": "Explain MTF and Score in Sinhala.",
+          "smc_summary": "Explain OB, POC & Liquidation in Sinhala."
         }`;
 
         const groqUrl = 'https://api.groq.com/openai/v1/chat/completions';
@@ -141,7 +175,8 @@ async (conn, mek, m, { reply, args }) => {
 ╚═══════════════════════════╝
 
 🪙 Coin: #${coin.replace('USDT', '')} / USDT
-⏱️ Session: ${marketSMC.killzone}
+⭐ *Confluence Score: ${finalScore}/6*
+✔️ Passed: ${finalReasons}
 
  *🎯 Trade Setup* 📉 Direction: ${data.direction} ${data.emoji}
 
@@ -158,14 +193,9 @@ Risk/Reward (RRR): ${data.rrr}
 🛡️ Max Risk Amount: ${data.risk}
 Confidence: ${data.confidence} 🔥
 
-*📊 Market Confirmations*
-📌 EMA 200 Trend: ${mainTrend}
-📌 Market State: ${marketState}
-📌 Higher Timeframe: ${mtfTrend}
-
 *💡 AI Analysis:*
 Trend: ${data.trend}
-Smart Money & Volume: ${data.smc_summary}
+Smart Money: ${data.smc_summary}
 
 ⚡ සටහන: ඔබේ ප්‍රාග්ධනය .margin මගින් යාවත්කාලීන කරන්න.${trackMsg}`;
         
