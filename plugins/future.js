@@ -9,45 +9,45 @@ const smc = require('../lib/smartmoney');
 cmd({
     pattern: "future",
     alias: ["futures"],
-    desc: "Ultimate Futures AI with Smart Entry System",
+    desc: "Ultimate Futures AI - Smart Entry + MTF + RRR Filter",
     category: "crypto",
     react: "🔴",
     filename: __filename
 },
 async (conn, mek, m, { reply, args }) => {
     try {
-        if (!args[0]) return await reply(`❌ කරුණාකර Coin එකක් ලබා දෙන්න!\n*උදා:* ${config.PREFIX}future BTC 15m`);
-        if (!config.GROQ_API) return await reply('❌ GROQ_API key එක නැහැ!');
+        if (!args[0]) return await reply(`❌ Coin ලබා දෙන්න!\n*උදා:* ${config.PREFIX}future BTC 15m`);
+        if (!config.GROQ_API) return await reply('❌ GROQ_API key නැහැ!');
 
         let coin = args[0].toUpperCase();
         if (!coin.endsWith('USDT')) coin += 'USDT';
         let timeframe = args[1] ? args[1].toLowerCase() : '15m';
 
         await m.react('⏳');
-        await reply(`⏳ *${coin} Smart Entry Analysis ආරම්භ කෙරේ...*`);
+        await reply(`⏳ *${coin} Full Analysis...*\n(MTF + Smart Entry + RRR Filter)`);
 
-        // ── Data Fetch ──────────────────────────────────────────
+        // ── Data Fetch ─────────────────────────────────────
         const currentCandles = await binance.getKlineData(coin, timeframe, 200);
-        const candles1H = await binance.getKlineData(coin, '1h', 60);
-        const candles4H = await binance.getKlineData(coin, '4h', 60);
-        const liqData = await binance.getLiquidationData(coin);
-        const currentPrice = parseFloat(currentCandles[currentCandles.length - 1][4]);
-        const currentPriceStr = currentPrice.toFixed(2);
+        const candles5m      = await binance.getKlineData(coin, '5m', 50);   // ✅ Feature 1
+        const candles1H      = await binance.getKlineData(coin, '1h', 60);
+        const candles4H      = await binance.getKlineData(coin, '4h', 60);
+        const liqData        = await binance.getLiquidationData(coin);
+        const currentPrice   = parseFloat(currentCandles[currentCandles.length - 1][4]);
+        const priceStr       = currentPrice.toFixed(2);
 
-        // ── Indicators ──────────────────────────────────────────
+        // ── Indicators ─────────────────────────────────────
         const ema200 = parseFloat(indicators.calculateEMA(currentCandles, 200));
         const ema50  = parseFloat(indicators.calculateEMA(currentCandles.slice(-100), 50));
         const ema21  = parseFloat(indicators.calculateEMA(currentCandles.slice(-50), 21));
 
-        const mainTrend  = currentPrice > ema200 ? "Bullish (Uptrend) 🟢" : "Bearish (Downtrend) 🔴";
+        const mainTrend  = currentPrice > ema200 ? "Bullish 🟢" : "Bearish 🔴";
         const isChoppy   = Math.abs(ema50 - ema21) / ema50 < 0.0015;
-        const marketState = isChoppy ? "CHOPPY / SIDEWAYS ⚠️" : "TRENDING 🚀";
+        const marketState = isChoppy ? "CHOPPY ⚠️" : "TRENDING 🚀";
 
         const ema1H   = parseFloat(indicators.calculateEMA(candles1H, 50));
         const ema4H   = parseFloat(indicators.calculateEMA(candles4H, 50));
-        const trend1H = parseFloat(candles1H[candles1H.length - 1][4]) > ema1H ? "Bullish 🟢" : "Bearish 🔴";
-        const trend4H = parseFloat(candles4H[candles4H.length - 1][4]) > ema4H ? "Bullish 🟢" : "Bearish 🔴";
-        const mtfTrend = `4H: ${trend4H} | 1H: ${trend1H}`;
+        const trend1H = parseFloat(candles1H[candles1H.length-1][4]) > ema1H ? "Bullish 🟢" : "Bearish 🔴";
+        const trend4H = parseFloat(candles4H[candles4H.length-1][4]) > ema4H ? "Bullish 🟢" : "Bearish 🔴";
 
         const rsi       = indicators.calculateRSI(currentCandles.slice(-50), 14);
         const atr       = indicators.calculateATR(currentCandles.slice(-50));
@@ -60,228 +60,190 @@ async (conn, mek, m, { reply, args }) => {
 
         const marketSMC = smc.analyzeSMC(currentCandles.slice(-50));
         const atrVal    = parseFloat(atr);
-
-        // VWAP price parse
-        const vwapMatch = vwap.match(/\$([0-9.]+)/);
-        const vwapPrice = vwapMatch ? parseFloat(vwapMatch[1]) : 0;
-
-        // ── Direction ───────────────────────────────────────────
         const direction = mainTrend.includes("Bullish") ? "LONG" : "SHORT";
 
-        // ── ✅ FIX 5: Best Entry Zone Select ────────────────────
-        const obForDir = direction === 'LONG' ? marketSMC.bullishOB : marketSMC.bearishOB;
-        const bestEntry = smc.selectBestEntry(
-            currentPriceStr,
-            obForDir,
-            marketSMC.fib618,
-            poc,
-            vwapPrice,
-            direction,
-            atrVal
-        );
+        // ── ✅ Feature 1: 5m MTF Confirmation ──────────────
+        const mtf5m = indicators.confirmEntry5m(candles5m, direction);
 
-        // ── ✅ FIX 2: Confirmation Check ─────────────────────────
-        const confirmation = smc.checkOBConfirmation(
-            currentCandles.slice(-5),
-            obForDir,
-            direction
-        );
+        // ── Smart Entry Zone ────────────────────────────────
+        const vwapMatch = vwap.match(/\$([0-9.]+)/);
+        const vwapPrice = vwapMatch ? parseFloat(vwapMatch[1]) : 0;
+        const obForDir  = direction === 'LONG' ? marketSMC.bullishOB : marketSMC.bearishOB;
 
-        // ── ✅ FIX 4: Order Type Suggestion ──────────────────────
-        const orderSuggestion = smc.getOrderTypeSuggestion(
-            bestEntry.price,
-            currentPrice,
-            direction
-        );
+        const bestEntry = smc.selectBestEntry(priceStr, obForDir, marketSMC.fib618, poc, vwapPrice, direction, atrVal);
+        const confirmation = smc.checkOBConfirmation(currentCandles.slice(-5), obForDir, direction);
+        const orderSuggestion = smc.getOrderTypeSuggestion(bestEntry.price, currentPrice, direction);
 
-        // ── ✅ FIX 3: SL from Zone (not just ATR) ───────────────
-        // OB zone ඇත්නම් zone-based SL, නැත්නම් ATR fallback
+        // ── TP / SL ─────────────────────────────────────────
         const entryPrice = parseFloat(bestEntry.price);
-        let smartSL, longTP1, longTP2, shortTP1, shortTP2, rrr;
+        let smartSL, tp1, tp2;
 
         if (direction === 'LONG') {
-            // Zone SL vs ATR SL - whichever is more logical
             const zoneSL = parseFloat(bestEntry.sl);
             const atrSL  = entryPrice - atrVal * 1.5;
-            // Zone SL ඉතා দূরে නැත්නම් (>3 ATR) use zone SL
             smartSL = (entryPrice - zoneSL) < atrVal * 3 ? zoneSL : atrSL;
-            longTP1 = (entryPrice + atrVal * 2.5).toFixed(2);
-            longTP2 = (entryPrice + atrVal * 4.0).toFixed(2);
-            rrr = ((parseFloat(longTP2) - entryPrice) / (entryPrice - smartSL)).toFixed(2);
+            tp1 = (entryPrice + atrVal * 2.5).toFixed(2);   // ✅ Partial TP1
+            tp2 = (entryPrice + atrVal * 4.0).toFixed(2);   // Main TP
         } else {
             const zoneSL = parseFloat(bestEntry.sl);
             const atrSL  = entryPrice + atrVal * 1.5;
             smartSL = (zoneSL - entryPrice) < atrVal * 3 ? zoneSL : atrSL;
-            shortTP1 = (entryPrice - atrVal * 2.5).toFixed(2);
-            shortTP2 = (entryPrice - atrVal * 4.0).toFixed(2);
-            rrr = ((entryPrice - parseFloat(shortTP2)) / (smartSL - entryPrice)).toFixed(2);
+            tp1 = (entryPrice - atrVal * 2.5).toFixed(2);
+            tp2 = (entryPrice - atrVal * 4.0).toFixed(2);
         }
 
         const entryStr = entryPrice.toFixed(2);
         const slStr    = parseFloat(smartSL).toFixed(2);
-        const tp1Str   = direction === 'LONG' ? longTP1 : shortTP1;
-        const tp2Str   = direction === 'LONG' ? longTP2 : shortTP2;
+        const rrrVal   = Math.abs(parseFloat(tp2) - entryPrice) / Math.abs(entryPrice - parseFloat(slStr));
+        const rrrStr   = rrrVal.toFixed(2);
 
-        // ── Risk Management ─────────────────────────────────────
+        // ── ✅ Feature 2: RRR Pre-Filter ────────────────────
+        const settings = await db.getSettings();
+        const rrrCheck = indicators.checkRRR(entryStr, tp2, slStr, settings.minRRR || 1.5);
+
+        if (!rrrCheck.pass && settings.strictMode) {
+            return await reply(
+`⛔ *TRADE REJECTED - RRR Filter*
+
+🪙 ${coin} | ${direction}
+📍 Entry: $${entryStr} | TP: $${tp2} | SL: $${slStr}
+
+${rrrCheck.reason}
+
+💡 Setup දුර්වලයි. TP zone වෙනස් වෙනකල් wait කරන්න.
+_Strict Mode OFF කිරීමට: ${config.PREFIX}set 4 off_`
+            );
+        }
+
+        // ── Risk Management ─────────────────────────────────
         const userMargin = await db.getMargin(m.sender) || 0;
-        const settings   = await db.getSettings();
         let levText = "Set .margin", riskText = "Set .margin", marginText = "Set .margin";
         if (userMargin > 0) {
-            let riskAmount     = userMargin * 0.02;
-            let deployedMargin = userMargin * 0.10;
-            let slDistance     = Math.abs(entryPrice - parseFloat(slStr)) / entryPrice;
-            riskText    = `$${riskAmount.toFixed(2)}`;
-            marginText  = `$${deployedMargin.toFixed(2)}`;
-            levText     = `${Math.min(Math.ceil((riskAmount / slDistance) / deployedMargin), 100)}x (Iso)`;
+            const riskAmt   = userMargin * 0.02;
+            const deployMgn = userMargin * 0.10;
+            const slDist    = Math.abs(entryPrice - parseFloat(slStr)) / entryPrice;
+            riskText   = `$${riskAmt.toFixed(2)}`;
+            marginText = `$${deployMgn.toFixed(2)}`;
+            levText    = `${Math.min(Math.ceil((riskAmt / slDist) / deployMgn), 100)}x (Iso)`;
         }
 
-        // ── Confluence Score ─────────────────────────────────────
-        let longScore = 0, shortScore = 0;
-        let longReasons = [], shortReasons = [];
+        // ── Confluence Score ────────────────────────────────
+        let longScore = 0, shortScore = 0, longR = [], shortR = [];
 
-        if (trend4H.includes("Bullish") && trend1H.includes("Bullish")) { longScore++;  longReasons.push("MTF Bullish"); }
-        if (trend4H.includes("Bearish") && trend1H.includes("Bearish")) { shortScore++; shortReasons.push("MTF Bearish"); }
-        if (currentPrice > ema200 && Math.abs(currentPrice - ema50) / ema50 < 0.003) { longScore++;  longReasons.push("EMA Pullback"); }
-        if (currentPrice < ema200 && Math.abs(currentPrice - ema50) / ema50 < 0.003) { shortScore++; shortReasons.push("EMA Pullback"); }
-        if (marketSMC.bullishOB) { longScore++;  longReasons.push("Bullish OB"); }
-        if (marketSMC.bearishOB) { shortScore++; shortReasons.push("Bearish OB"); }
-        if (rsi < 35)  { longScore++;  longReasons.push("RSI Oversold"); }
-        if (rsi > 65)  { shortScore++; shortReasons.push("RSI Overbought"); }
-        if (vwap.includes('🟢')) { longScore++;  longReasons.push("Above VWAP"); }
-        if (vwap.includes('🔴')) { shortScore++; shortReasons.push("Below VWAP"); }
-        if (pattern.includes('🟢')) { longScore++;  longReasons.push("Candle Pattern"); }
-        if (pattern.includes('🔴')) { shortScore++; shortReasons.push("Candle Pattern"); }
-        if (volBreak.includes("Bullish Breakout"))  { longScore++;  longReasons.push("Vol Breakout"); }
-        if (volBreak.includes("Bearish Breakout"))  { shortScore++; shortReasons.push("Vol Breakout"); }
-        if (divergence.includes("Bullish")) { longScore++;  longReasons.push("Bullish Divergence"); }
-        if (divergence.includes("Bearish")) { shortScore++; shortReasons.push("Bearish Divergence"); }
+        if (trend4H.includes("Bullish") && trend1H.includes("Bullish")) { longScore++;  longR.push("MTF 4H+1H"); }
+        if (trend4H.includes("Bearish") && trend1H.includes("Bearish")) { shortScore++; shortR.push("MTF 4H+1H"); }
+        if (currentPrice > ema200 && Math.abs(currentPrice-ema50)/ema50 < 0.003) { longScore++;  longR.push("EMA Pullback"); }
+        if (currentPrice < ema200 && Math.abs(currentPrice-ema50)/ema50 < 0.003) { shortScore++; shortR.push("EMA Pullback"); }
+        if (marketSMC.bullishOB) { longScore++;  longR.push("Bull OB"); }
+        if (marketSMC.bearishOB) { shortScore++; shortR.push("Bear OB"); }
+        if (rsi < 35)  { longScore++;  longR.push("RSI Oversold"); }
+        if (rsi > 65)  { shortScore++; shortR.push("RSI Overbought"); }
+        if (vwap.includes('🟢')) { longScore++;  longR.push("Above VWAP"); }
+        if (vwap.includes('🔴')) { shortScore++; shortR.push("Below VWAP"); }
+        if (pattern.includes('🟢')) { longScore++;  longR.push(pattern.split(' ')[0]); }
+        if (pattern.includes('🔴')) { shortScore++; shortR.push(pattern.split(' ')[0]); }
+        if (volBreak.includes("Bullish Breakout"))  { longScore++;  longR.push("Vol Breakout"); }
+        if (volBreak.includes("Bearish Breakout"))  { shortScore++; shortR.push("Vol Breakout"); }
+        if (divergence.includes("Bullish")) { longScore++;  longR.push("Divergence"); }
+        if (divergence.includes("Bearish")) { shortScore++; shortR.push("Divergence"); }
         if (confirmation.confirmed) {
-            if (direction === 'LONG')  { longScore++;  longReasons.push("OB Confirmed ✅"); }
-            if (direction === 'SHORT') { shortScore++; shortReasons.push("OB Confirmed ✅"); }
+            if (direction === 'LONG')  { longScore++;  longR.push("OB Confirmed"); }
+            else                       { shortScore++; shortR.push("OB Confirmed"); }
+        }
+        // ✅ Feature 1: 5m MTF score
+        if (mtf5m.confirmed) {
+            if (direction === 'LONG')  { longScore++;  longR.push("5m Aligned ✅"); }
+            else                       { shortScore++; shortR.push("5m Aligned ✅"); }
         }
 
-        const maxScore    = 9;
+        const maxScore    = 10; // +1 for 5m MTF
         const finalScore  = direction === 'LONG' ? longScore : shortScore;
-        let   finalReasons = direction === 'LONG' ? longReasons.join(', ') : shortReasons.join(', ');
-        if (!finalReasons) finalReasons = "None matched";
+        const finalReasons = (direction === 'LONG' ? longR : shortR).join(', ') || "None";
 
-        // ── Asian Session Warning ────────────────────────────────
         const asianWarning = marketSMC.killzone.includes("Asian")
-            ? "\n⚠️ *ASIAN SESSION:* Fakeout risk ඉහළයි. London/NY session දක්වා wait කරන්න." : "";
+            ? "\n⚠️ *ASIAN SESSION* - Fakeout risk ඉහළ. Wait recommended." : "";
 
-        // ── AI Prompt ────────────────────────────────────────────
-        let strictRule = settings.strictMode
-            ? "If Score < 4 or CHOPPY market or Asian session, output WAIT."
-            : "Even if score is low, output targets with confidence <50% and strong WARNING.";
+        // ── AI Prompt ───────────────────────────────────────
+        const rrrWarn = !rrrCheck.pass ? `\n⚠️ RRR below minimum (1:${rrrCheck.rrr}) - mention risk warning` : "";
+        const prompt = `Analyze ${coin} FUTURES. Current: $${priceStr}
 
-        const prompt = `You are a Master Crypto AI. Analyze ${coin} FUTURES.
-Current Price: $${currentPriceStr}
+[SCORE: ${finalScore}/${maxScore}] Confluences: ${finalReasons}
+5m MTF: ${mtf5m.status}
+RRR Check: ${rrrCheck.reason}${rrrWarn}
 
-[CONFLUENCE SCORE: ${finalScore}/${maxScore}]
-Passed: ${finalReasons}
+Market: ${marketState} | Trend: ${mainTrend} | MTF: 4H=${trend4H} 1H=${trend1H}
+RSI: ${rsi} | VWAP: ${vwap} | Volume: ${volBreak} | Divergence: ${divergence}
+OB Bull: ${marketSMC.bullishOBDisplay} | OB Bear: ${marketSMC.bearishOBDisplay}
+Kill Zone: ${marketSMC.killzone} | Liquidation: ${liqData.sentiment}
 
-[SMART ENTRY SYSTEM]
-Best Entry Zone: ${bestEntry.name}
-Entry Price: $${entryStr} (Zone: $${bestEntry.zoneBottom ? bestEntry.zoneBottom.toFixed ? bestEntry.zoneBottom.toFixed(2) : bestEntry.zoneBottom : 'N/A'} - $${bestEntry.zoneTop ? bestEntry.zoneTop.toFixed ? bestEntry.zoneTop.toFixed(2) : bestEntry.zoneTop : 'N/A'})
-Order Type: ${orderSuggestion.type}
+Entry Zone: ${bestEntry.name} | Order: ${orderSuggestion.type}
 Confirmation: ${confirmation.status}
 
-[MARKET DATA]
-Market: ${marketState} | Trend: ${mainTrend} | MTF: ${mtfTrend}
-RSI: ${rsi} | VWAP: ${vwap} | Volume: ${volBreak}
-Divergence: ${divergence} | Kill Zone: ${marketSMC.killzone}
-OB Bull: ${marketSMC.bullishOBDisplay} | OB Bear: ${marketSMC.bearishOBDisplay}
-Liquidation: ${liqData.sentiment}
+STRICT MATH (use exactly):
+direction: "${direction}", entry: "${entryStr}", tp1: "${tp1}", tp2: "${tp2}", sl: "${slStr}"
+rrr: "1:${rrrStr}", leverage: "${levText}", margin: "${marginText}", risk: "${riskText}"
 
-MATH RULES (use EXACTLY these numbers):
-Direction: ${direction}
-entry: "${entryStr}", tp1: "${tp1Str}", tp2: "${tp2Str}", sl: "${slStr}"
-rrr: "1:${rrr}", leverage: "${levText}", margin: "${marginText}", risk: "${riskText}"
-${strictRule}
+${settings.strictMode && finalScore < 4 ? 'Score too low - output WAIT' : 'Output full signal'}
 
-Sinhala explanations. Keep RSI/VWAP/OB/MACD/SMC terms in English.
+Sinhala explanations. English for RSI/VWAP/OB/MACD/SMC.
 
-Respond ONLY with JSON:
-{
-  "direction": "${direction} or WAIT",
-  "emoji": "🟢 or 🔴 or ⚪",
-  "entry": "${entryStr}",
-  "tp1": "${tp1Str}",
-  "tp2": "${tp2Str}",
-  "sl": "${slStr}",
-  "rrr": "1:${rrr}",
-  "leverage": "${levText}",
-  "margin": "${marginText}",
-  "risk": "${riskText}",
-  "confidence": "e.g. 85%",
-  "trend": "MTF + Score Sinhala explanation",
-  "smc_summary": "Entry zone + OB + Liquidation Sinhala explanation"
-}`;
+JSON only:
+{"direction":"${direction} or WAIT","emoji":"🟢 or 🔴 or ⚪","entry":"${entryStr}","tp1":"${tp1}","tp2":"${tp2}","sl":"${slStr}","rrr":"1:${rrrStr}","leverage":"${levText}","margin":"${marginText}","risk":"${riskText}","confidence":"XX%","trend":"sinhala","smc_summary":"sinhala"}`;
 
         const aiRes = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
             model: "llama-3.3-70b-versatile",
             messages: [{ role: "user", content: prompt }]
-        }, { headers: { 'Authorization': `Bearer ${config.GROQ_API}`, 'Content-Type': 'application/json' } });
+        }, { headers: { Authorization: `Bearer ${config.GROQ_API}`, 'Content-Type': 'application/json' } });
 
-        const raw = aiRes.data.choices[0].message.content.replace(/```(?:json)?\n?/g, '');
-        const jsonMatch = raw.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) throw new Error(`AI invalid JSON: ${raw.substring(0, 200)}`);
-        let data = JSON.parse(jsonMatch[0]);
+        const raw  = aiRes.data.choices[0].message.content.replace(/```(?:json)?\n?/g, '');
+        const jm   = raw.match(/\{[\s\S]*\}/);
+        if (!jm) throw new Error(`AI JSON error: ${raw.substring(0,150)}`);
+        const data = JSON.parse(jm[0]);
 
-        // ── Zone Warning ──────────────────────────────────────────
-        let zoneWarnMsg = bestEntry.warning ? `\n\n${bestEntry.warning}` : "";
+        const zoneWarn = bestEntry.warning ? `\n\n${bestEntry.warning}` : "";
+        const rrrWarnMsg = !rrrCheck.pass ? `\n\n⚠️ *RRR WARNING:* ${rrrCheck.reason}` : "";
+        const trackMsg = data.direction !== "WAIT"
+            ? `\n📌 Track: .track reply\n[TARGETS|ENTRY:${entryStr}|TP:${tp2}|SL:${slStr}]` : "";
 
-        // ── Track Message ─────────────────────────────────────────
-        let trackMsg = data.direction !== "WAIT"
-            ? `\n📌 Track කිරීමට .track ලෙස Reply කරන්න.\n[TARGETS|ENTRY:${entryStr}|TP:${tp2Str}|SL:${slStr}]`
-            : "";
-
-        // ── Output ───────────────────────────────────────────────
-        const outMsg = `
+        const out = `
 ╔═══════════════════════════╗
 ║ 🎯 *PRO SNIPER ANALYSIS* ║
 ╚═══════════════════════════╝
 
-🪙 Coin: #${coin.replace('USDT', '')} / USDT
-💵 Current Price: $${currentPriceStr}
-⭐ *Confluence: ${finalScore}/${maxScore}* | ✔️ ${finalReasons}
-⏱️ Session: ${marketSMC.killzone}${asianWarning}
+🪙 ${coin.replace('USDT','')} / USDT  💵 $${priceStr}
+⭐ *Score: ${finalScore}/${maxScore}* ✔️ ${finalReasons}
+⏱️ ${marketSMC.killzone}${asianWarning}
 
-*🎯 Smart Entry Setup* ${data.emoji} ${data.direction}
+*🔬 5m MTF Confirmation:*
+${mtf5m.status}
 
-🏹 *Entry Zone:* ${bestEntry.name}
-   Zone Range: $${bestEntry.zoneBottom ? parseFloat(bestEntry.zoneBottom).toFixed(2) : 'N/A'} ➜ $${bestEntry.zoneTop ? parseFloat(bestEntry.zoneTop).toFixed(2) : 'N/A'}
-📍 *Ideal Entry:* $${data.entry}
-📋 *Order Type:* ${orderSuggestion.type}
+*🎯 Smart Entry* ${data.emoji} ${data.direction}
+🏹 Zone: ${bestEntry.name}
+   $${parseFloat(bestEntry.zoneBottom||0).toFixed(2)} ➜ $${parseFloat(bestEntry.zoneTop||0).toFixed(2)}
+📍 Entry: $${data.entry}
+📋 Order: ${orderSuggestion.type}
    ${orderSuggestion.reason}
-
-🔔 *Confirmation:* ${confirmation.status}
+🔔 ${confirmation.status}
 
 🎯 *Take Profits:*
-   ▪️ TP 1 (Safe): $${data.tp1}
-   ▪️ TP 2 (Main): $${data.tp2}
-🛡️ *Stop Loss:* $${data.sl}
-   _(Zone invalidation SL)_
+   ▪️ TP1 (Partial 50%): $${data.tp1}
+   ▪️ TP2 (Final 50%):   $${data.tp2}
+🛡️ SL (Zone Invalidation): $${data.sl}
 
-*⚖️ Risk Management (2% Risk)*
-Risk/Reward: ${data.rrr}
+*⚖️ Risk Management*
+RRR: ${data.rrr} ${rrrCheck.pass ? '✅' : '⚠️'}
 ⚙️ Leverage: ${data.leverage}
-💰 Margin: ${data.margin}
-🛡️ Max Risk: ${data.risk}
+💰 Margin:   ${data.margin}
+🛡️ Risk:     ${data.risk}
 🔥 Confidence: ${data.confidence}
 
-*💡 AI Analysis:*
+*💡 Analysis:*
 ${data.trend}
+${data.smc_summary}${zoneWarn}${rrrWarnMsg}
 
-*📊 Smart Money:*
-${data.smc_summary}${zoneWarnMsg}
+⚡ _.margin_ ලෙ capital set කරන්න.${trackMsg}`;
 
-⚡ _.margin_ command ලෙස ඔබේ capital set කරන්න.${trackMsg}`;
-
-        await reply(outMsg.trim());
+        await reply(out.trim());
         await m.react('✅');
-
-    } catch (e) {
-        await reply('❌ Error: ' + e.message);
-    }
+    } catch (e) { await reply('❌ Error: ' + e.message); }
 });

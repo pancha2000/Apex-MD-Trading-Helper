@@ -2,7 +2,6 @@ const { cmd } = require('../lib/commands');
 const db = require('../lib/database');
 const config = require('../config');
 
-// ================= OWNER CONTROL PANEL =================
 cmd({
     pattern: "settings",
     alias: ["botsettings", "control"],
@@ -15,31 +14,41 @@ cmd({
 async (conn, mek, m, { reply }) => {
     try {
         const s = await db.getSettings();
-        let msg = `╔═══════════════════════════╗\n`;
-        msg += `║   ⚙️ *APEX-MD CONTROL PANEL* ║\n`;
-        msg += `╚═══════════════════════════╝\n\n`;
-        
-        msg += `*1. Auto Signals:* ${s.autoSignal ? '✅ ON' : '❌ OFF'}\n`;
-        msg += `   _(හැම 15m වරක්ම BTC, ETH, SOL ස්වයංක්‍රීයව scan කර signals යවයි)_\n\n`;
-        
-        msg += `*2. Trailing SL:* ${s.trailingSl ? '✅ ON' : '❌ OFF'}\n`;
-        msg += `   _(Trade එක 50% ලාභ වූ විට SL අගය Entry මට්ටමට Auto මාරු කරයි)_\n\n`;
-        
-        msg += `*3. Trend Filter:* ${s.trendFilter ? '✅ ON' : '❌ OFF'}\n`;
-        msg += `   _(මාකට් එක Extreme Fear (දැඩි අවදානම්) නම් trades ලබාදීම නවතයි)_\n\n`;
+        const msg = `
+╔═══════════════════════════╗
+║  ⚙️ *APEX-MD CONTROL PANEL* ║
+╚═══════════════════════════╝
 
-        // 🚀 අලුතින් එකතු කළ Strict Mode කෑල්ල
-        msg += `*4. Strict Mode:* ${s.strictMode ? '✅ ON' : '❌ OFF'}\n`;
-        msg += `   _(අවදානම් අවස්ථාවලදී බොරු ටාගට් නොදී 'WAIT' තීරණය ගනී)_\n\n`;
-        
-        msg += `> 📌 *වෙනස් කිරීමට:* ${config.PREFIX}set <අංකය> <on/off>\n`;
-        msg += `> *උදා:* ${config.PREFIX}set 4 off`;
-        
-        await reply(msg);
+*1. Auto Signals:* ${s.autoSignal ? '✅ ON' : '❌ OFF'}
+   _(15m වරක් BTC/ETH/SOL auto scan)_
+
+*2. Trailing SL:* ${s.trailingSl ? '✅ ON' : '❌ OFF'}
+   _(50% profit ලැබූ විට SL Entry ලෙ move)_
+
+*3. Trend Filter:* ${s.trendFilter ? '✅ ON' : '❌ OFF'}
+   _(Extreme Fear ලෙ trades block)_
+
+*4. Strict Mode:* ${s.strictMode ? '✅ ON' : '❌ OFF'}
+   _(Score <4 හෝ RRR fail ලෙ WAIT output)_
+
+*5. Partial TP Alerts:* ${s.partialTp ? '✅ ON' : '❌ OFF'}
+   _(TP1 hit ලෙ 50% close alert)_
+
+*6. Min RRR:* ${s.minRRR || 1.5}x
+   _(ඉහළ ගිය trades filter කිරීමේ minimum)_
+
+📌 *වෙනස් කිරීමට:*
+${config.PREFIX}set 1 on/off  → Auto Signals
+${config.PREFIX}set 2 on/off  → Trailing SL
+${config.PREFIX}set 3 on/off  → Trend Filter
+${config.PREFIX}set 4 on/off  → Strict Mode
+${config.PREFIX}set 5 on/off  → Partial TP
+${config.PREFIX}set 6 1.5     → Min RRR value`;
+
+        await reply(msg.trim());
     } catch (e) { await reply('❌ Error: ' + e.message); }
 });
 
-// ================= CHANGE SETTINGS =================
 cmd({
     pattern: "set",
     desc: "Change bot settings",
@@ -50,21 +59,32 @@ cmd({
 },
 async (conn, mek, m, { reply, args }) => {
     try {
-        if (!args[0] || !args[1]) return await reply(`❌ කරුණාකර නිවැරදිව ලබා දෙන්න.\n*උදා:* ${config.PREFIX}set 4 off`);
-        
-        const num = args[0];
-        const state = args[1].toLowerCase() === 'on';
-        
-        let updateData = {};
-        let featureName = "";
+        if (!args[0] || !args[1]) return await reply(`❌ නිවැරදිව ලබා දෙන්න.\n*උදා:* ${config.PREFIX}set 4 off`);
 
-        if (num === '1') { updateData.autoSignal = state; featureName = "Auto Signals"; }
-        else if (num === '2') { updateData.trailingSl = state; featureName = "Trailing SL"; }
+        const num   = args[0];
+        const value = args[1].toLowerCase();
+        const state = value === 'on';
+
+        let updateData = {}, featureName = "";
+
+        if (num === '1') { updateData.autoSignal = state;  featureName = "Auto Signals"; }
+        else if (num === '2') { updateData.trailingSl = state;  featureName = "Trailing SL"; }
         else if (num === '3') { updateData.trendFilter = state; featureName = "Trend Filter"; }
-        else if (num === '4') { updateData.strictMode = state; featureName = "Strict Mode"; } // 👈 අලුත් Setting ලොජික් එක
-        else return await reply('❌ වැරදි අංකයකි! 1, 2, 3 හෝ 4 භාවිතා කරන්න.');
+        else if (num === '4') { updateData.strictMode = state;  featureName = "Strict Mode"; }
+        else if (num === '5') { updateData.partialTp = state;   featureName = "Partial TP Alerts"; }
+        else if (num === '6') {
+            // ✅ RRR number value
+            const rrrVal = parseFloat(value);
+            if (isNaN(rrrVal) || rrrVal < 1.0 || rrrVal > 5.0) {
+                return await reply('❌ Min RRR 1.0 - 5.0 අතර විය යුතුය.\nඋදා: .set 6 1.5');
+            }
+            updateData.minRRR = rrrVal;
+            featureName = `Min RRR → ${rrrVal}x`;
+        }
+        else return await reply('❌ 1-6 අතර අංකයක් භාවිතා කරන්න.');
 
         await db.updateSettings(updateData);
-        await reply(`✅ *${featureName}* පහසුකම සාර්ථකව ${state ? 'ON' : 'OFF'} කරන ලදී!`);
+        await reply(`✅ *${featureName}* ${num === '6' ? 'update' : (state ? 'ON' : 'OFF')} කරන ලදී!`);
+        await m.react('✅');
     } catch (e) { await reply('❌ Error: ' + e.message); }
 });
