@@ -58,6 +58,7 @@ async (conn, mek, m, { reply, args }) => {
         const pattern   = indicators.checkCandlePattern(currentCandles.slice(-10));
         const volBreak  = indicators.checkVolumeBreakout(currentCandles.slice(-50));
         const divergence = indicators.checkDivergence(currentCandles.slice(-50));
+        const adxData   = indicators.calculateADX(currentCandles.slice(-50));
 
         const marketSMC = smc.analyzeSMC(currentCandles.slice(-50));
         const atrVal    = parseFloat(atr);
@@ -176,6 +177,10 @@ RRR Check: ${rrrCheck.reason}${rrrWarn}
 
 Market: ${marketState} | Trend: ${mainTrend} | MTF: 4H=${trend4H} 1H=${trend1H}
 RSI: ${rsi} | VWAP: ${vwap} | Volume: ${volBreak} | Divergence: ${divergence}
+Market: ${marketState} | Trend: ${mainTrend} | MTF: 4H=${trend4H} 1H=${trend1H}
+ADX: ${adxData.status} 
+RSI: ${rsi} | VWAP: ${vwap} | Volume: ${volBreak} | Divergence: ${divergence}
+
 OB Bull: ${marketSMC.bullishOBDisplay} | OB Bear: ${marketSMC.bearishOBDisplay}
 Kill Zone: ${marketSMC.killzone} | Liquidation: ${liqData.sentiment}
 
