@@ -1,9 +1,9 @@
-const { cmd } = require('./commands'); 
+const { cmd } = require('..lib/commands'); 
 const config = require('../config');
-const binance = require('./binance');
-const indicators = require('./indicators');
-const smc = require('./smartmoney');
-const db = require('./database');
+const binance = require('..lib/binance');
+const indicators = require('..lib/indicators');
+const smc = require('..lib/smartmoney');
+const db = require('..lib/database');
 const axios = require('axios');
 
 // 🧠 1. SUPER SCANNER: 10-Factor Scoring System
