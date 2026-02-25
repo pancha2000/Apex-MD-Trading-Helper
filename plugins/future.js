@@ -9,7 +9,7 @@ const smc = require('../lib/smartmoney');
 cmd({
     pattern: "future",
     alias: ["futures"],
-    desc: "Ultimate Futures AI - Smart Entry + MTF + RRR Filter",
+    desc: "Ultimate Futures AI - 12 Factor Smart Entry",
     category: "crypto",
     react: "🔴",
     filename: __filename
@@ -24,10 +24,9 @@ async (conn, mek, m, { reply, args }) => {
         let timeframe = args[1] ? args[1].toLowerCase() : '15m';
 
         await m.react('⏳');
-        await reply(`⏳ *${coin} Full Analysis...*\n(MTF + Smart Entry + RRR Filter)`);
+        await reply(`⏳ *${coin} Full 12-Factor Analysis...*\n(MTF + Divergence + Volume Spikes + Smart Entry)`);
 
         // ── Data Fetch ─────────────────────────────────────
-        // ✅ FIX 1: EMA 200 නිවැරදිව ගණනය කිරීම සඳහා කැන්ඩල්ස් 500 ක් ලබා ගැනීම
         const currentCandles = await binance.getKlineData(coin, timeframe, 500);
         const candles5m      = await binance.getKlineData(coin, '5m', 50);   
         const candles1H      = await binance.getKlineData(coin, '1h', 60);
@@ -97,7 +96,6 @@ async (conn, mek, m, { reply, args }) => {
         const entryStr = entryPrice.toFixed(2);
         const slStr    = parseFloat(smartSL).toFixed(2);
         
-        // ✅ FIX 2: Zero Division Risk එක ඉවත් කිරීම
         const riskAmount = Math.abs(entryPrice - parseFloat(slStr));
         const rrrVal   = riskAmount > 0 ? (Math.abs(parseFloat(tp2) - entryPrice) / riskAmount) : 0;
         const rrrStr   = rrrVal.toFixed(2);
@@ -132,40 +130,59 @@ _Strict Mode OFF කිරීමට: ${config.PREFIX}set 4 off_`
             levText    = `${Math.min(Math.ceil((riskAmt / slDist) / deployMgn), 100)}x (Iso)`;
         }
 
-        // ── Confluence Score ────────────────────────────────
+        // ── 12-Factor Confluence Score ──────────────────────
         let longScore = 0, shortScore = 0, longR = [], shortR = [];
 
-        if (trend4H.includes("Bullish") && trend1H.includes("Bullish")) { longScore++;  longR.push("MTF 4H+1H"); }
-        if (trend4H.includes("Bearish") && trend1H.includes("Bearish")) { shortScore++; shortR.push("MTF 4H+1H"); }
+        if (trend4H.includes("Bullish") && trend1H.includes("Bullish")) { longScore++;  longR.push("MTF Bull"); }
+        if (trend4H.includes("Bearish") && trend1H.includes("Bearish")) { shortScore++; shortR.push("MTF Bear"); }
         if (currentPrice > ema200 && Math.abs(currentPrice-ema50)/ema50 < 0.003) { longScore++;  longR.push("EMA Pullback"); }
         if (currentPrice < ema200 && Math.abs(currentPrice-ema50)/ema50 < 0.003) { shortScore++; shortR.push("EMA Pullback"); }
         if (marketSMC.bullishOB) { longScore++;  longR.push("Bull OB"); }
         if (marketSMC.bearishOB) { shortScore++; shortR.push("Bear OB"); }
-        if (rsi < 35)  { longScore++;  longR.push("RSI Oversold"); }
-        if (rsi > 65)  { shortScore++; shortR.push("RSI Overbought"); }
+        if (rsi < 45)  { longScore++;  longR.push("RSI Oversold"); }
+        if (rsi > 55)  { shortScore++; shortR.push("RSI Overbought"); }
         if (vwap.includes('🟢')) { longScore++;  longR.push("Above VWAP"); }
         if (vwap.includes('🔴')) { shortScore++; shortR.push("Below VWAP"); }
         if (pattern.includes('🟢')) { longScore++;  longR.push(pattern.split(' ')[0]); }
         if (pattern.includes('🔴')) { shortScore++; shortR.push(pattern.split(' ')[0]); }
-        if (volBreak.includes("Bullish Breakout"))  { longScore++;  longR.push("Vol Breakout"); }
-        if (volBreak.includes("Bearish Breakout"))  { shortScore++; shortR.push("Vol Breakout"); }
+        if (volBreak.includes("Bullish Breakout"))  { longScore++;  longR.push("Vol Spike"); }
+        if (volBreak.includes("Bearish Breakout"))  { shortScore++; shortR.push("Vol Spike"); }
         if (divergence.includes("Bullish")) { longScore++;  longR.push("Divergence"); }
         if (divergence.includes("Bearish")) { shortScore++; shortR.push("Divergence"); }
+        if (macd.includes("Bullish")) { longScore++; longR.push("MACD Bull"); }
+        if (macd.includes("Bearish")) { shortScore++; shortR.push("MACD Bear"); }
+        if (marketSMC.sweep.includes("Bullish") || marketSMC.choch.includes("Bullish")) { longScore++; longR.push("Sweep/ChoCH"); }
+        if (marketSMC.sweep.includes("Bearish") || marketSMC.choch.includes("Bearish")) { shortScore++; shortR.push("Sweep/ChoCH"); }
         if (confirmation.confirmed) {
-            if (direction === 'LONG')  { longScore++;  longR.push("OB Confirmed"); }
-            else                       { shortScore++; shortR.push("OB Confirmed"); }
+            if (direction === 'LONG')  { longScore++;  longR.push("OB Touch ✅"); }
+            else                       { shortScore++; shortR.push("OB Touch ✅"); }
         }
         if (mtf5m.confirmed) {
             if (direction === 'LONG')  { longScore++;  longR.push("5m Aligned ✅"); }
             else                       { shortScore++; shortR.push("5m Aligned ✅"); }
         }
 
-        const maxScore    = 10; 
+        const maxScore    = 12; 
         const finalScore  = direction === 'LONG' ? longScore : shortScore;
         const finalReasons = (direction === 'LONG' ? longR : shortR).join(', ') || "None";
 
         const asianWarning = marketSMC.killzone.includes("Asian")
             ? "\n⚠️ *ASIAN SESSION* - Fakeout risk ඉහළ. Wait recommended." : "";
+
+        // 🛑 Hard Block: දුර්වල Trades ප්‍රතික්ෂේප කිරීම (Strict Mode)
+        if (settings.strictMode && finalScore < 5) {
+            return await reply(
+`⛔ *TRADE REJECTED - Strict Mode* ⛔
+
+🪙 ${coin} | ${direction}
+⭐ Score: ${finalScore}/${maxScore}
+📊 ADX: ${adxData.status}
+
+❌ *හේතුව:* Confluence Score එක ඉතා අඩුයි (${finalScore}/${maxScore}). Market එකේ ගැළපෙන සාධක මදි.
+💡 _ප්‍රාග්ධනය ආරක්ෂා කිරීම සඳහා මෙම දුර්වල Trade එක ප්‍රතික්ෂේප කරන ලදී._
+_Strict Mode OFF කිරීමට: ${config.PREFIX}set 4 off_`
+            );
+        }
 
         // ── AI Prompt ───────────────────────────────────────
         const rrrWarn = !rrrCheck.pass ? `\n⚠️ RRR below minimum (1:${rrrCheck.rrr}) - mention risk warning` : "";
@@ -176,10 +193,8 @@ _Strict Mode OFF කිරීමට: ${config.PREFIX}set 4 off_`
 RRR Check: ${rrrCheck.reason}${rrrWarn}
 
 Market: ${marketState} | Trend: ${mainTrend} | MTF: 4H=${trend4H} 1H=${trend1H}
-RSI: ${rsi} | VWAP: ${vwap} | Volume: ${volBreak} | Divergence: ${divergence}
-Market: ${marketState} | Trend: ${mainTrend} | MTF: 4H=${trend4H} 1H=${trend1H}
 ADX: ${adxData.status} 
-RSI: ${rsi} | VWAP: ${vwap} | Volume: ${volBreak} | Divergence: ${divergence}
+RSI: ${rsi} | VWAP: ${vwap} | Volume: ${volBreak} | Divergence: ${divergence} | MACD: ${macd}
 
 OB Bull: ${marketSMC.bullishOBDisplay} | OB Bear: ${marketSMC.bearishOBDisplay}
 Kill Zone: ${marketSMC.killzone} | Liquidation: ${liqData.sentiment}
@@ -191,9 +206,7 @@ STRICT MATH (use exactly):
 direction: "${direction}", entry: "${entryStr}", tp1: "${tp1}", tp2: "${tp2}", sl: "${slStr}"
 rrr: "1:${rrrStr}", leverage: "${levText}", margin: "${marginText}", risk: "${riskText}"
 
-${settings.strictMode && finalScore < 4 ? 'Score too low - output WAIT' : 'Output full signal'}
-
-Sinhala explanations. English for RSI/VWAP/OB/MACD/SMC.
+Output full signal with insights. Sinhala explanations. English for technical terms.
 
 JSON only:
 {"direction":"${direction} or WAIT","emoji":"🟢 or 🔴 or ⚪","entry":"${entryStr}","tp1":"${tp1}","tp2":"${tp2}","sl":"${slStr}","rrr":"1:${rrrStr}","leverage":"${levText}","margin":"${marginText}","risk":"${riskText}","confidence":"XX%","trend":"sinhala","smc_summary":"sinhala"}`;
@@ -220,6 +233,7 @@ JSON only:
 
 🪙 ${coin.replace('USDT','')} / USDT  💵 $${priceStr}
 ⭐ *Score: ${finalScore}/${maxScore}* ✔️ ${finalReasons}
+📊 *ADX Trend:* ${adxData.status}
 ⏱️ ${marketSMC.killzone}${asianWarning}
 
 *🔬 5m MTF Confirmation:*
