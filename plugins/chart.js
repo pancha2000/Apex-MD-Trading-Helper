@@ -20,7 +20,6 @@ async (conn, mek, m, { reply, args }) => {
         await m.react('⏳');
         await reply(`⏳ *${coin} හි Chart එක නිර්මාණය කරමින් පවතී...*`);
 
-        // දත්ත ලබාගැනීම (අවසන් කැන්ඩල් 60)
         const candles = await binance.getKlineData(coin, timeframe, 100);
         const recentCandles = candles.slice(-60);
         
@@ -28,18 +27,16 @@ async (conn, mek, m, { reply, args }) => {
         let prices = [];
         let ema50Data = [];
 
-        // EMA 50 ගණනය කිරීම
-        const fullEma50 = indicators.calculateEMA(candles, 50, true); // true = array output
+        const fullEma50 = indicators.calculateEMA(candles, 50, true); 
         const recentEma50 = fullEma50.slice(-60);
 
         recentCandles.forEach((c, i) => {
-            let date = new Date(c[0]);
+            let date = new Date(parseInt(c[0])); 
             labels.push(`${date.getHours()}:${date.getMinutes()}`);
             prices.push(parseFloat(c[4]));
             ema50Data.push(parseFloat(recentEma50[i]));
         });
 
-        // QuickChart Configuration (Dark Theme)
         const chartConfig = {
             type: 'line',
             data: {
@@ -48,7 +45,7 @@ async (conn, mek, m, { reply, args }) => {
                     {
                         label: 'Price (මිල)',
                         data: prices,
-                        borderColor: '#00E676', // Green
+                        borderColor: '#00E676', 
                         backgroundColor: 'rgba(0, 230, 118, 0.1)',
                         borderWidth: 2,
                         fill: true,
@@ -57,7 +54,7 @@ async (conn, mek, m, { reply, args }) => {
                     {
                         label: 'EMA 50 (Trend)',
                         data: ema50Data,
-                        borderColor: '#FF1744', // Red
+                        borderColor: '#FF1744', 
                         borderWidth: 2,
                         borderDash: [5, 5],
                         fill: false,
@@ -76,7 +73,6 @@ async (conn, mek, m, { reply, args }) => {
             }
         };
 
-        // Image එක Download කිරීම
         const response = await axios.post('https://quickchart.io/chart', {
             chart: chartConfig,
             width: 800,
@@ -86,8 +82,10 @@ async (conn, mek, m, { reply, args }) => {
 
         const buffer = Buffer.from(response.data, 'binary');
 
-        // පින්තූරය WhatsApp එකට යැවීම
-        await conn.sendMessage(m.chat, { 
+        // ✅ FIX: නිවැරදි JID එක ලබා ගැනීම (Error එක හැදුවේ මෙතනයි)
+        const targetJid = mek.key.remoteJid || m.chat || m.from;
+
+        await conn.sendMessage(targetJid, { 
             image: buffer, 
             caption: `📊 *${coin} - ${timeframe} Analysis Chart*\n\n🟢 කොළ පැහැය: Market Price\n🔴 රතු ඉරි: EMA 50 Trend Line\n\n_මිල EMA 50 ට වඩා ඉහළින් ඇත්නම් එය Uptrend එකකි._` 
         }, { quoted: mek });

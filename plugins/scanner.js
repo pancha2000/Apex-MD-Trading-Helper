@@ -10,7 +10,6 @@ const axios = require('axios');
 async function getTopDownSetups() {
     let foundSetups = [];
     const dynamicCoins = await binance.getTopTrendingCoins(30);
-    console.log(`🔍 10-Factor Super-Scanning Top ${dynamicCoins.length} Trending Coins...`);
     
     for (let coin of dynamicCoins) {
         try {
@@ -23,7 +22,6 @@ async function getTopDownSetups() {
             const currentPrice = parseFloat(candles15m[candles15m.length - 1][4]);
             const adxData = indicators.calculateADX(candles15m.slice(-50));
 
-            // ── Indicators ──
             const ema50_4h = parseFloat(indicators.calculateEMA(candles4h, 50));
             const trend4H = parseFloat(candles4h[candles4h.length - 1][4]) > ema50_4h ? "UP" : "DOWN";
             const ema50_1h = parseFloat(indicators.calculateEMA(candles1h, 50));
@@ -39,7 +37,6 @@ async function getTopDownSetups() {
             const volBreak   = indicators.checkVolumeBreakout(candles15m.slice(-50));
             const divergence = indicators.checkDivergence(candles15m.slice(-50));
 
-            // 🎯 10-Point Score Board
             let longScore = 0, shortScore = 0;
             let longReasons = [], shortReasons = [];
 
@@ -74,7 +71,6 @@ async function getTopDownSetups() {
             if (marketSMC.sweep.includes('Bullish') || marketSMC.choch.includes('Bullish')) { longScore++; longReasons.push("Sweep/ChoCH"); }
             if (marketSMC.sweep.includes('Bearish') || marketSMC.choch.includes('Bearish')) { shortScore++; shortReasons.push("Sweep/ChoCH"); }
 
-            // 🏆 ලකුණු 4 හෝ ඊට වැඩි ඒවා එකතු කිරීම
             if (longScore >= 4) {
                 foundSetups.push({ coin: coin.replace('USDT', ''), type: 'LONG 🟢', rawScore: longScore, score: `${longScore}/10`, price: currentPrice.toFixed(2), adx: adxData.value, entryPoint: ema50_15m.toFixed(2), reasons: longReasons.join(', ') });
             }
@@ -88,19 +84,18 @@ async function getTopDownSetups() {
     return foundSetups.slice(0, 5);
 }
 
-// 🔄 2. Background Scanner Engine (Auto-Start Trick)
-let autoScanStarted = false;
+// 🔄 2. Background Scanner Engine (Auto-Start Logic)
+let isEngineRunning = false;
 
-cmd({ on: "body" }, async (conn, mek, m) => {
-    // මේකෙන් වෙන්නේ බොට්ට පළවෙනි මැසේජ් එක ආපු ගමන් ස්කෑනර් එක ස්ටාර්ට් වෙන එකයි
-    if (autoScanStarted) return;
-    autoScanStarted = true;
+function startBackgroundEngine(conn) {
+    if (isEngineRunning) return;
+    isEngineRunning = true;
 
     console.log('🚀 Super Scanner Engine Started...');
     let ownerJid = config.OWNER_NUMBER + '@s.whatsapp.net'; 
 
     conn.sendMessage(ownerJid, { 
-        text: `✅ *SUPER SCANNER ACTIVATED!* 🚀\n\n10-Factor Auto Scanner සාර්ථකව ක්‍රියාත්මක විය.\n\n_බොට් දැන් සෑම විනාඩි 5කට වරක්ම Top 30 Coins පරීක්ෂා කර, ඉහළම ලකුණු ගත් හොඳම Trade Setups 5 පමණක් ඔබට Alert එකක් එවනු ඇත._ 🛡️\n\n(ස්කෑනරය වැඩදැයි අතින් පරීක්ෂා කිරීමට *.superscan* භාවිතා කරන්න)`
+        text: `✅ *SUPER SCANNER ACTIVATED!* 🚀\n\n10-Factor Auto Scanner සහ Trade Manager ක්‍රියාත්මක විය.\n\n_බොට් දැන් සෑම විනාඩි 5කට වරක්ම Top 30 Coins පරීක්ෂා කර, ඉහළම ලකුණු ගත් හොඳම Trade Setups පමණක් ඔබට Alert එකක් එවනු ඇත._ 🛡️`
     }).catch(err => console.log("Startup Alert Error:", err.message));
 
     // ─── TASK 1: ACTIVE TRADE MANAGER ───
@@ -174,7 +169,7 @@ cmd({ on: "body" }, async (conn, mek, m) => {
             }
         } catch (error) { }
     }, 5 * 60 * 1000);
-});
+}
 
 // 🎯 3. MANUAL COMMAND (.superscan)
 cmd({
@@ -187,6 +182,12 @@ cmd({
 },
 async (conn, mek, m, { reply }) => {
     try {
+        // ✅ AUTO-START TRIGGER
+        // ඔයා .superscan කියල ගහපු ගමන් මේකෙන් Auto Engine එක තනියම On වෙනවා!
+        if (!isEngineRunning) {
+            startBackgroundEngine(conn);
+        }
+
         await m.react('⏳');
         await reply(`🚀 *10-Factor Super Scanner ක්‍රියාත්මක වේ...*\n(Top 30 Trending Coins පරීක්ෂා කර හොඳම 5 තෝරාගනිමින් පවතී...)`);
         
@@ -205,3 +206,5 @@ async (conn, mek, m, { reply }) => {
         await m.react('✅');
     } catch (e) { await reply('❌ Error: ' + e.message); }
 });
+
+module.exports = { startBackgroundEngine };
