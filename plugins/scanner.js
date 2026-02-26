@@ -104,15 +104,14 @@ async (conn, mek, m, { reply }) => {
         return await reply("⚠️ *අවවාදයයි:* Bot Settings වල Auto Signals OFF වී ඇත!\nපළමුව `.set 1 on` ලෙස යවා සක්‍රිය කර, නැවත `.scanstart` ලබා දෙන්න.");
     }
 
-    // ✅ FIX: Chat ID එක හරියටම අඳුරගන්නවා (m.chat වෙනුවට m.from)
     const targetChat = m.from || mek.from;
-
     await reply("✅ *AUTO ENGINE STARTED!*\n\nමෙම චැට් එකට සෑම විනාඩි 5කට වරක්ම Top 5 Signals ලැබෙනු ඇත. පළමු ස්කෑන් කිරීම දැන් සිදුවේ... ⏳");
 
     activeTradeManager = setInterval(async () => {
         try {
             const currentSettings = await db.getSettings();
-            const activeTrades = await db.Trade.find({ status: 'active' });
+            // ✅ FIX: Active සහ Pending යන දෙවර්ගයේම Trades ලබාගැනීම
+            const activeTrades = await db.Trade.find({ status: { $in: ['active', 'pending'] } });
             if (!activeTrades || activeTrades.length === 0) return;
 
             for (let trade of activeTrades) {
@@ -121,6 +120,23 @@ async (conn, mek, m, { reply }) => {
                     const currentPrice = parseFloat(res.data.price);
                     const isLong = trade.direction === 'LONG';
 
+                    // ─── PENDING ORDER CHECK (LIMIT ORDERS) ───
+                    if (trade.status === 'pending') {
+                        let triggered = false;
+                        // Long එකකදී current price එක entry එකට හෝ ඊට පහළට යා යුතුය
+                        if (isLong && currentPrice <= trade.entry) triggered = true;
+                        // Short එකකදී current price එක entry එකට හෝ ඊට ඉහළට යා යුතුය
+                        if (!isLong && currentPrice >= trade.entry) triggered = true;
+
+                        if (triggered) {
+                            trade.status = 'active';
+                            await trade.save();
+                            await conn.sendMessage(trade.userJid, { text: `✅ *ORDER FILLED!* 🔔\n🪙 ${trade.coin} (${trade.direction})\n\nMarket එක ඔබේ Entry Price ($${trade.entry}) වෙත පැමිණ ඇත.\n_දැන් සිට Trade එක Active වන අතර TP/SL Alert ක්‍රියාත්මක වේ!_ 🚀` });
+                        }
+                        continue; // Order එක Active වුණා පමණයි. අදාල TP/SL check කිරීම මීළඟ විනාඩියේදී සිදුවේ.
+                    }
+
+                    // ─── ACTIVE TRADE CHECKS (TP, SL, Trailing) ───
                     if (currentSettings.partialTp && trade.tp1 && !trade.tp1Hit) {
                         const tp1Hit = isLong ? currentPrice >= trade.tp1 : currentPrice <= trade.tp1;
                         if (tp1Hit) {
@@ -175,9 +191,7 @@ async (conn, mek, m, { reply }) => {
                 });
                 await conn.sendMessage(targetChat, { text: outMsg.trim() });
             }
-        } catch (error) { 
-            console.log("Scanner Logic Error: ", error.message);
-        }
+        } catch (error) { }
     };
 
     runAutoScan();
