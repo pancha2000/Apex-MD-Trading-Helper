@@ -9,7 +9,7 @@ const smc = require('../lib/smartmoney');
 cmd({
     pattern: "future",
     alias: ["futures"],
-    desc: "Ultimate Futures AI - 14-Factor MTF + Harmonic + ICT + Whale Walls",
+    desc: "Ultimate Futures AI - 14-Factor MTF + Harmonic + ICT + Whale Walls + Grid",
     category: "crypto",
     react: "🔴",
     filename: __filename
@@ -28,7 +28,7 @@ async (conn, mek, m, { reply, args }) => {
         if (timeframe === '1d' || timeframe === '1w') tradeCategory = "📅 Swing Trade";
 
         await m.react('⏳');
-        await reply(`⏳ *${coin} Full 14-Factor Analysis...*\n(MTF + Whale Walls + Harmonic + ICT Silver Bullet)`);
+        await reply(`⏳ *${coin} Full 14-Factor Analysis...*\n(MTF + Whale Walls + Harmonic + True Choppy Detection ⚙️)`);
 
         const currentCandles = await binance.getKlineData(coin, timeframe, 500);
         const candles5m      = await binance.getKlineData(coin, '5m', 50);   
@@ -41,17 +41,29 @@ async (conn, mek, m, { reply, args }) => {
         const priceStr       = currentPrice.toFixed(4);
 
         const ema200 = parseFloat(indicators.calculateEMA(currentCandles, 200));
-        const ema50  = parseFloat(indicators.calculateEMA(currentCandles.slice(-100), 50));
-        const ema21  = parseFloat(indicators.calculateEMA(currentCandles.slice(-50), 21));
-
-        const mainTrend  = currentPrice > ema200 ? "Bullish 🟢" : "Bearish 🔴";
-        const isChoppy   = Math.abs(ema50 - ema21) / ema50 < 0.0015;
-        const marketState = isChoppy ? "CHOPPY ⚠️" : "TRENDING 🚀";
-
         const ema1H   = parseFloat(indicators.calculateEMA(candles1H, 50));
         const ema4H   = parseFloat(indicators.calculateEMA(candles4H, 50));
         const trend1H = parseFloat(candles1H[candles1H.length-1][4]) > ema1H ? "Bullish 🟢" : "Bearish 🔴";
         const trend4H = parseFloat(candles4H[candles4H.length-1][4]) > ema4H ? "Bullish 🟢" : "Bearish 🔴";
+        const mainTrend  = currentPrice > ema200 ? "Bullish 🟢" : "Bearish 🔴";
+
+        const adxData   = indicators.calculateADX(currentCandles.slice(-50));
+        
+        // ✅ NEW: True Choppy vs Pullback Detection (MTF Logic)
+        const isHTFAligned = (trend1H.includes("Bullish") && trend4H.includes("Bullish")) || (trend1H.includes("Bearish") && trend4H.includes("Bearish"));
+        let marketState = "";
+        let isTrueChoppy = false;
+
+        if (!adxData.isStrong) { // ADX අඩු නම් (විවේක ගනී නම්)
+            if (isHTFAligned) {
+                marketState = `CONSOLIDATION ⏳ (${trend4H.includes("Bullish") ? 'Bull Flag' : 'Bear Flag'})`;
+            } else {
+                marketState = `TRUE CHOPPY ⚖️ (Grid Mode Active)`;
+                isTrueChoppy = true;
+            }
+        } else {
+            marketState = `TRENDING 🚀`;
+        }
 
         const rsi       = indicators.calculateRSI(currentCandles.slice(-50), 14);
         const atr       = indicators.calculateATR(currentCandles.slice(-50));
@@ -61,9 +73,6 @@ async (conn, mek, m, { reply, args }) => {
         const pattern   = indicators.checkCandlePattern(currentCandles.slice(-10));
         const volBreak  = indicators.checkVolumeBreakout(currentCandles.slice(-50));
         const divergence = indicators.checkDivergence(currentCandles.slice(-50));
-        const adxData   = indicators.calculateADX(currentCandles.slice(-50));
-
-        // ✅ NEW: Harmonic Pattern & ICT Silver Bullet
         const harmonicPattern = indicators.checkHarmonicPattern(currentCandles.slice(-100));
         const ictSilverBullet = indicators.checkICTSilverBullet(currentCandles.slice(-10));
 
@@ -77,7 +86,6 @@ async (conn, mek, m, { reply, args }) => {
         const vwapPrice = vwapMatch ? parseFloat(vwapMatch[1]) : 0;
         const obForDir  = direction === 'LONG' ? marketSMC.bullishOB : marketSMC.bearishOB;
 
-        // ✅ FIX: Added harmonicPattern to selectBestEntry
         const bestEntry = smc.selectBestEntry(priceStr, obForDir, marketSMC.fib618, poc, vwapPrice, direction, atrVal, harmonicPattern);
         const confirmation = smc.checkOBConfirmation(currentCandles.slice(-5), obForDir, direction);
         const orderSuggestion = smc.getOrderTypeSuggestion(bestEntry.price, currentPrice, direction);
@@ -111,7 +119,7 @@ async (conn, mek, m, { reply, args }) => {
         const settings = await db.getSettings();
         const rrrCheck = indicators.checkRRR(entryStr, tp2Str, slStr, settings.minRRR || 1.5);
 
-        if (!rrrCheck.pass && settings.strictMode) {
+        if (!rrrCheck.pass && settings.strictMode && !isTrueChoppy) {
             return await reply(
 `⛔ *TRADE REJECTED - RRR Filter*
 
@@ -119,9 +127,7 @@ async (conn, mek, m, { reply, args }) => {
 📍 Entry: $${entryStr} | TP: $${tp2Str} | SL: $${slStr}
 
 ${rrrCheck.reason}
-
-💡 Setup දුර්වලයි. TP zone වෙනස් වෙනකල් wait කරන්න.
-_Strict Mode OFF කිරීමට: ${config.PREFIX}set 4 off_`
+💡 Setup දුර්වලයි. TP zone වෙනස් වෙනකල් wait කරන්න.`
             );
         }
 
@@ -167,62 +173,31 @@ _Strict Mode OFF කිරීමට: ${config.PREFIX}set 4 off_`
             if (direction === 'LONG')  { longScore++;  longR.push("5m Aligned ✅"); }
             else                       { shortScore++; shortR.push("5m Aligned ✅"); }
         }
-
-        // ✅ NEW: SCORING FOR HARMONIC & ICT
         if (harmonicPattern.includes("Bullish")) { longScore++; longR.push(harmonicPattern.split(' ')[1]); }
         if (harmonicPattern.includes("Bearish")) { shortScore++; shortR.push(harmonicPattern.split(' ')[1]); }
-        
         if (ictSilverBullet.includes("Bullish")) { longScore++; longR.push("ICT Time 🎯"); }
         if (ictSilverBullet.includes("Bearish")) { shortScore++; shortR.push("ICT Time 🎯"); }
 
-        const maxScore    = 14;  // 👈 දත්ත 14ක් දක්වා ඉහළ නංවා ඇත
+        const maxScore    = 14; 
         const finalScore  = direction === 'LONG' ? longScore : shortScore;
         const finalReasons = (direction === 'LONG' ? longR : shortR).join(', ') || "None";
 
-        const asianWarning = marketSMC.killzone.includes("Asian")
-            ? "\n⚠️ *ASIAN SESSION* - Fakeout risk ඉහළ. Wait recommended." : "";
+        const asianWarning = marketSMC.killzone.includes("Asian") ? "\n⚠️ *ASIAN SESSION* - Fakeout risk ඉහළ. Wait recommended." : "";
 
-        if (settings.strictMode && finalScore < 5) {
-            return await reply(
-`⛔ *TRADE REJECTED - Strict Mode* ⛔
-
-🪙 ${coin} | ${direction}
-⭐ Score: ${finalScore}/${maxScore}
-📊 ADX: ${adxData.status}
-
-❌ *හේතුව:* Confluence Score එක ඉතා අඩුයි (${finalScore}/${maxScore}). Market එකේ ගැළපෙන සාධක මදි.
-💡 _ප්‍රාග්ධනය ආරක්ෂා කිරීම සඳහා මෙම දුර්වල Trade එක ප්‍රතික්ෂේප කරන ලදී._
-_Strict Mode OFF කිරීමට: ${config.PREFIX}set 4 off_`
-            );
+        if (settings.strictMode && finalScore < 5 && !isTrueChoppy) {
+            return await reply(`⛔ *TRADE REJECTED - Strict Mode* ⛔\n🪙 ${coin} | ${direction}\n⭐ Score: ${finalScore}/${maxScore}\n❌ *හේතුව:* Confluence Score එක ඉතා අඩුයි.`);
         }
 
-        const rrrWarn = !rrrCheck.pass ? `\n⚠️ RRR below minimum (1:${rrrCheck.rrr}) - mention risk warning` : "";
         const prompt = `Analyze ${coin} FUTURES. Current: $${priceStr}
-
 [SCORE: ${finalScore}/${maxScore}] Confluences: ${finalReasons}
-5m MTF: ${mtf5m.status}
-RRR Check: ${rrrCheck.reason}${rrrWarn}
-
 Market: ${marketState} | Trend: ${mainTrend} | MTF: 4H=${trend4H} 1H=${trend1H}
-ADX: ${adxData.status} 
-RSI: ${rsi} | VWAP: ${vwap} | Volume: ${volBreak} | Divergence: ${divergence} | MACD: ${macd}
-Harmonic Pattern: ${harmonicPattern}
-ICT Silver Bullet: ${ictSilverBullet}
-
+ADX: ${adxData.status} | RSI: ${rsi} | VWAP: ${vwap}
 OB Bull: ${marketSMC.bullishOBDisplay} | OB Bear: ${marketSMC.bearishOBDisplay}
 Kill Zone: ${marketSMC.killzone} | Liquidation: ${liqData.sentiment}
+Entry Zone: ${bestEntry.name} | Confirmation: ${confirmation.status}
 
-Entry Zone: ${bestEntry.name} | Order: ${orderSuggestion.type}
-Confirmation: ${confirmation.status}
-
-STRICT MATH (use exactly):
-direction: "${direction}", entry: "${entryStr}", tp1: "${tp1Str}", tp2: "${tp2Str}", sl: "${slStr}"
-rrr: "1:${rrrStr}", leverage: "${levText}", margin: "${marginText}", risk: "${riskText}"
-
-Output full signal with insights. Sinhala explanations. English for technical terms.
-
-JSON only:
-{"direction":"${direction} or WAIT","emoji":"🟢 or 🔴 or ⚪","entry":"${entryStr}","tp1":"${tp1Str}","tp2":"${tp2Str}","sl":"${slStr}","rrr":"1:${rrrStr}","leverage":"${levText}","margin":"${marginText}","risk":"${riskText}","confidence":"XX%","trend":"sinhala","smc_summary":"sinhala"}`;
+STRICT MATH: direction: "${direction}", entry: "${entryStr}", tp1: "${tp1Str}", tp2: "${tp2Str}", sl: "${slStr}", rrr: "1:${rrrStr}"
+Output JSON only: {"direction":"${direction} or WAIT","emoji":"🟢 or 🔴 or ⚪","entry":"${entryStr}","tp1":"${tp1Str}","tp2":"${tp2Str}","sl":"${slStr}","rrr":"1:${rrrStr}","leverage":"${levText}","margin":"${marginText}","risk":"${riskText}","confidence":"XX%","trend":"sinhala","smc_summary":"sinhala"}`;
 
         const aiRes = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
             model: "llama-3.3-70b-versatile",
@@ -231,18 +206,25 @@ JSON only:
 
         const raw  = aiRes.data.choices[0].message.content.replace(/```(?:json)?\n?/g, '');
         const jm   = raw.match(/\{[\s\S]*\}/);
-        if (!jm) throw new Error(`AI JSON error: ${raw.substring(0,150)}`);
+        if (!jm) throw new Error(`AI JSON error`);
         const data = JSON.parse(jm[0]);
 
-        const zoneWarn = bestEntry.warning ? `\n\n${bestEntry.warning}` : "";
-        const rrrWarnMsg = !rrrCheck.pass ? `\n\n⚠️ *RRR WARNING:* ${rrrCheck.reason}` : "";
-        const trackMsg = data.direction !== "WAIT"
-            ? `\n📌 Track: .track reply\n[TARGETS|ENTRY:${data.entry}|TP:${data.tp2}|SL:${data.sl}]` : "";
+        // ✅ NEW: Grid Generation if True Choppy
+        let gridStr = "";
+        if (isTrueChoppy) {
+            let highs = currentCandles.slice(-50).map(c => parseFloat(c[2]));
+            let lows = currentCandles.slice(-50).map(c => parseFloat(c[3]));
+            let res = Math.max(...highs), sup = Math.min(...lows);
+            let step = (res - sup) / 5;
+            gridStr = `\n\n*🕸️ GRID SCALPING ZONES (True Choppy):*\n🔴 Resistance: $${(sup+step*5).toFixed(4)} (Sell Zone)\n🟠 Grid 4: $${(sup+step*4).toFixed(4)}\n🟡 Grid 3: $${(sup+step*3).toFixed(4)} (Neutral)\n🟢 Grid 2: $${(sup+step*2).toFixed(4)}\n🟢 Support: $${sup.toFixed(4)} (Buy Zone)\n_💡 මෙම වෙළඳපොළේ දිශාවක් නොමැති බැවින් Support/Resistance Scalping පමණක් කරන්න._`;
+        }
 
-        // ✅ NEW: Display Harmonic & ICT in output
-        let extraInfo = "";
+        let extraInfo = gridStr;
         if (harmonicPattern !== "None") extraInfo += `\n📐 *Harmonic PRZ:* ${harmonicPattern}`;
         if (ictSilverBullet !== "Active Time (No FVG)" && ictSilverBullet !== "None") extraInfo += `\n🕒 *ICT Strategy:* ${ictSilverBullet}`;
+
+        const zoneWarn = bestEntry.warning ? `\n\n${bestEntry.warning}` : "";
+        const trackMsg = data.direction !== "WAIT" && !isTrueChoppy ? `\n📌 Track: .track reply\n[TARGETS|ENTRY:${data.entry}|TP:${data.tp2}|SL:${data.sl}]` : "";
 
         const out = `
 ╔═══════════════════════════╗
@@ -250,7 +232,7 @@ JSON only:
 ╚═══════════════════════════╝
 
 🪙 ${coin.replace('USDT','')} / USDT  💵 $${priceStr}
-📌 *Trade Style:* ${tradeCategory}
+📌 *Market State:* ${marketState}
 ⭐ *Score: ${finalScore}/${maxScore}* ✔️ ${finalReasons}
 📊 *ADX Trend:* ${adxData.status}
 ⏱️ ${marketSMC.killzone}${asianWarning}${extraInfo}
@@ -260,7 +242,6 @@ ${mtf5m.status}
 
 *🎯 Smart Entry* ${data.emoji} ${data.direction}
 🏹 Zone: ${bestEntry.name}
-   $${parseFloat(bestEntry.zoneBottom||0).toFixed(4)} ➜ $${parseFloat(bestEntry.zoneTop||0).toFixed(4)}
 📍 Entry: $${data.entry}
 📋 Order: ${orderSuggestion.type}
    ${orderSuggestion.reason}
@@ -281,14 +262,12 @@ RRR: ${data.rrr} ${rrrCheck.pass ? '✅' : '⚠️'}
 *🐋 Whale Tracking (Orderbook):*
 🟢 Buy Wall (Support): $${whaleWalls.supportWall} (${whaleWalls.supportVol} USDT)
 🔴 Sell Wall (Resist): $${whaleWalls.resistWall} (${whaleWalls.resistVol} USDT)
-📊 CVD Pressure: ${whaleWalls.cvd}
 
 *💡 Analysis:*
 ${data.trend}
-${data.smc_summary}${zoneWarn}${rrrWarnMsg}
+${data.smc_summary}${zoneWarn}
 
-🖼️ Chart: .chart ${coin} ${timeframe}
-⚡ _.margin_ ලෙ capital set කරන්න.${trackMsg}`;
+🖼️ Chart: .chart ${coin} ${timeframe}${trackMsg}`;
 
         await reply(out.trim());
         await m.react('✅');
