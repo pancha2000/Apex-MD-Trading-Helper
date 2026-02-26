@@ -2,10 +2,11 @@ const { cmd } = require('../lib/commands');
 const config = require('../config');
 const binance = require('../lib/binance');
 const indicators = require('../lib/indicators');
+const smc = require('../lib/smartmoney');
 
 cmd({
     pattern: "backtest",
-    desc: "Sniper Strategy (EMA 200 + Pullback + Fixed RSI Thresholds)",
+    desc: "Advanced Institutional SMC + Harmonic Backtester",
     category: "crypto",
     react: "⏪",
     filename: __filename
@@ -19,7 +20,7 @@ async (conn, mek, m, { reply, args }) => {
         let timeframe = args[1] ? args[1].toLowerCase() : '15m';
 
         await m.react('⏳');
-        await reply(`⏳ *${coin} හි "Sniper" Backtest ආරම්භ කෙරේ...*\n(EMA 200 + Wilder RSI + Volume Filter සහිතව)`);
+        await reply(`⏳ *${coin} හි "Institutional SMC + Harmonic" Backtest ආරම්භ කෙරේ...*\n(කරුණාකර රැඳී සිටින්න. සංකීර්ණ ගණනය කිරීම් හේතුවෙන් මෙය තත්පර කිහිපයක් ගතවිය හැක ⚙️)`);
 
         let candles;
         try {
@@ -28,101 +29,131 @@ async (conn, mek, m, { reply, args }) => {
             return await reply("❌ Binance දත්ත ලබාගැනීමට නොහැකි විය.");
         }
 
-        if (!candles || candles.length < 500) return await reply("❌ ප්‍රමාණවත් දත්ත නොමැත.");
+        if (!candles || candles.length < 500) return await reply("❌ ප්‍රමාණවත් දත්ත නොමැත (අවම 500ක් අවශ්‍යයි).");
 
         let totalTrades = 0, wins = 0, losses = 0, longTrades = 0, shortTrades = 0;
-        let consecutive = 0, maxConsecutiveLoss = 0, currLoss = 0;
+        let maxConsecutiveLoss = 0, currLoss = 0;
 
-        for (let i = 200; i < candles.length - 30; i++) {
-            let historySlice = candles.slice(i - 200, i);
-            let lastCandle = historySlice[historySlice.length - 1];
-            let currentPrice = parseFloat(lastCandle[4]);
-            let currentLow = parseFloat(lastCandle[3]);
-            let currentHigh = parseFloat(lastCandle[2]);
+        // Loop through historical candles
+        let i = 200; // Start from 200 to have enough history for EMA200
+        while (i < candles.length - 10) {
+            let slice = candles.slice(i - 100, i); 
+            let currentPrice = parseFloat(slice[slice.length - 1][4]);
 
-            // ✅ FIX: නිවැරදි RSI - Wilder method (enough candles)
-            let rsi = indicators.calculateRSI(historySlice.slice(-30), 14);
-            let atr = parseFloat(indicators.calculateATR(historySlice.slice(-20), 14));
-            let ema50 = parseFloat(indicators.calculateEMA(historySlice.slice(-100), 50));
-            let ema200 = parseFloat(indicators.calculateEMA(historySlice, 200));
-            let volBreak = indicators.checkVolumeBreakout(historySlice.slice(-30));
+            // Indicators Calculation for current step
+            let ema200 = parseFloat(indicators.calculateEMA(candles.slice(i - 200, i), 200));
+            let ema50 = parseFloat(indicators.calculateEMA(slice, 50));
+            let rsi = indicators.calculateRSI(slice.slice(-50), 14);
+            let atr = parseFloat(indicators.calculateATR(slice.slice(-50), 14));
+            
+            // Advanced SMC & Pattern Calculation
+            let marketSMC = smc.analyzeSMC(slice.slice(-50));
+            let harmonicPattern = indicators.checkHarmonicPattern(slice);
+            let ictSilverBullet = indicators.checkICTSilverBullet(slice.slice(-10));
 
-            if (!ema200 || !ema50 || !atr) continue;
+            let longScore = 0, shortScore = 0;
 
-            // ✅ FIX: RSI Thresholds & EMA Pullback Buffer Relaxed
-            // Fakeout filter: volume breakout ගත් places skip
-            let isFakeout = volBreak.includes("Fakeout");
+            // 1. Trend Filter
+            if (currentPrice > ema200) longScore++;
+            if (currentPrice < ema200) shortScore++;
 
-            // Pullback කලාපය 0.5% දක්වා වැඩි කළා. RSI එක 50 මට්ටමට ගෙනාවා.
-            let isLong = currentPrice > ema200 && currentPrice > ema50
-                && currentLow <= (ema50 * 1.005) && rsi < 50 && !isFakeout;
+            // 2. EMA Pullback
+            let diffFromEma50 = Math.abs(currentPrice - ema50) / ema50;
+            if (currentPrice > ema200 && diffFromEma50 < 0.005) longScore++;
+            if (currentPrice < ema200 && diffFromEma50 < 0.005) shortScore++;
 
-            let isShort = currentPrice < ema200 && currentPrice < ema50
-                && currentHigh >= (ema50 * 0.995) && rsi > 50 && !isFakeout;
+            // 3. SMC Order Blocks
+            if (marketSMC.bullishOB) longScore++;
+            if (marketSMC.bearishOB) shortScore++;
 
-            if (isLong || isShort) {
+            // 4. RSI Threshold
+            if (rsi < 45) longScore++;
+            if (rsi > 55) shortScore++;
+
+            // 5. Liquidity Sweep / ChoCH
+            if (marketSMC.sweep.includes("Bullish") || marketSMC.choch.includes("Bullish")) longScore++;
+            if (marketSMC.sweep.includes("Bearish") || marketSMC.choch.includes("Bearish")) shortScore++;
+
+            // 6. Harmonic Patterns (VIP Factor - Gets 2 Points)
+            if (harmonicPattern.includes("Bullish")) longScore += 2; 
+            if (harmonicPattern.includes("Bearish")) shortScore += 2;
+
+            // 7. ICT Silver Bullet
+            if (ictSilverBullet.includes("Bullish")) longScore++;
+            if (ictSilverBullet.includes("Bearish")) shortScore++;
+
+            let tradeTaken = false;
+            let isLong = false;
+
+            // Execution Threshold
+            if (longScore >= 4) { tradeTaken = true; isLong = true; longTrades++; }
+            else if (shortScore >= 4) { tradeTaken = true; isLong = false; shortTrades++; }
+
+            if (tradeTaken) {
                 totalTrades++;
-                let entryPrice = currentPrice;
-                let tp, sl;
+                let entry = currentPrice;
+                let sl, tp;
 
+                // Smart ATR based TP/SL
                 if (isLong) {
-                    longTrades++;
-                    tp = entryPrice + (atr * 2.5);
-                    sl = entryPrice - (atr * 1.5);
+                    sl = entry - (atr * 1.5);
+                    tp = entry + (atr * 2.5); // RRR ~ 1:1.6
                 } else {
-                    shortTrades++;
-                    tp = entryPrice - (atr * 2.5);
-                    sl = entryPrice + (atr * 1.5);
+                    sl = entry + (atr * 1.5);
+                    tp = entry - (atr * 2.5);
                 }
 
-                let tradeWon = false;
-                for (let j = i + 1; j < i + 30 && j < candles.length; j++) {
+                // Forward test to check trade outcome
+                for (let j = i; j < candles.length; j++) {
                     let futureHigh = parseFloat(candles[j][2]);
                     let futureLow = parseFloat(candles[j][3]);
+
                     if (isLong) {
                         if (futureLow <= sl) { losses++; currLoss++; maxConsecutiveLoss = Math.max(maxConsecutiveLoss, currLoss); break; }
-                        if (futureHigh >= tp) { wins++; tradeWon = true; currLoss = 0; break; }
+                        if (futureHigh >= tp) { wins++; currLoss = 0; break; }
                     } else {
                         if (futureHigh >= sl) { losses++; currLoss++; maxConsecutiveLoss = Math.max(maxConsecutiveLoss, currLoss); break; }
-                        if (futureLow <= tp) { wins++; tradeWon = true; currLoss = 0; break; }
+                        if (futureLow <= tp) { wins++; currLoss = 0; break; }
                     }
                 }
-                i += 15;
+                i += 10; // Jump 10 candles forward after a trade
+            } else {
+                i++; // Move to next candle
             }
         }
 
         let winRate = totalTrades > 0 ? ((wins / totalTrades) * 100).toFixed(2) : 0;
-        // ✅ NEW: Profit Factor calculation
         let profitFactor = losses > 0 ? ((wins * 2.5) / (losses * 1.5)).toFixed(2) : "∞";
 
         const outMsg = `
 ╔═══════════════════════════╗
-║ 🎯 *SNIPER BACKTEST RESULTS* ║
+║ 🎯 *INSTITUTIONAL BACKTEST* ║
 ╚═══════════════════════════╝
 
 🪙 Coin: #${coin.replace('USDT', '')} / USDT
 ⏱️ Timeframe: ${timeframe}
 📊 Analyzed: 1000 candles
 
-*🎯 Strategy Performance:*
+*🧠 Strategy Matrix Used:*
+▫️ SMC (Order Blocks, Sweeps, ChoCH)
+▫️ Harmonic Patterns (Gartley, Bat)
+▫️ ICT Silver Bullet
+▫️ Trend & Pullbacks
+
+*🎯 Performance Results:*
 ▫️ Total Trades: ${totalTrades} (Long: ${longTrades} | Short: ${shortTrades})
 🟢 Wins (TP Hit): ${wins}
 🔴 Losses (SL Hit): ${losses}
 
 🏆 *Win Rate: ${winRate}%*
-📈 Profit Factor: ${profitFactor} (>1.5 = Good)
+📈 Profit Factor: ${profitFactor} (>1.5 = Superb)
 ⚠️ Max Consecutive Loss: ${maxConsecutiveLoss}
 
-*📌 Strategy Rules Used:*
-▫️ Entry: Price > EMA200 + EMA50 Pullback (Relaxed to 0.5%)
-▫️ RSI Threshold: Long <50 | Short >50
-▫️ Fakeout Filter: Low Volume Breakout Skip
-▫️ TP: ATR x2.5 | SL: ATR x1.5
+💡 _මෙම ප්‍රතිඵල මගින් අතීත දත්ත මත පදනම්ව AI හි සාර්ථකත්වය පෙන්වයි._`;
 
-⚡ *නිගමනය:*
-${winRate >= 60 ? "✅ Strategy ඉතා සාර්ථකයි! (High Profit Zone)" : winRate >= 48 ? "⚠️ මධ්‍යම සාර්ථකත්වය. AI Filter අනිවාර්යයි." : "❌ Win Rate අඩුයි. Timeframe/Coin වෙනස් කරන්න."}
-`;
         await reply(outMsg.trim());
         await m.react('✅');
-    } catch (e) { await reply('❌ Error: ' + e.message); }
+    } catch (err) {
+        await reply('❌ Error: ' + err.message);
+    }
 });
