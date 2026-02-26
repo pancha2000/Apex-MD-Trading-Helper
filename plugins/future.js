@@ -237,7 +237,7 @@ Output JSON only: {"direction":"${direction} or WAIT","emoji":"🟢 or 🔴 or �
 ║ 🎯 *PRO SNIPER ANALYSIS* ║
 ╚═══════════════════════════╝
 
-{dangerWarning}
+${dangerWarning}
 
 🪙 ${coin.replace('USDT','')} / USDT  💵 $${priceStr}
 📌 *Market State:* ${marketState}
