@@ -229,7 +229,7 @@ Output JSON only: {"direction":"${direction} or WAIT","emoji":"🟢 or 🔴 or �
         // ✅ NEW: Danger Warning if Strict Mode is OFF but trade is bad
         let dangerWarning = "";
         if (!settings.strictMode && (finalScore < 5 || !rrrCheck.pass)) {
-            dangerWarning = `\n\n🚨 *AI WARNING: DO NOT TAKE THIS TRADE!* 🚨\nමෙම Trade හි Confluence සාධක ඉතා දුර්වලයි (${finalScore}/${maxScore}). මෙය ගැනීමෙන් ඔබේ ප්‍රාග්ධනය අවදානමේ වැටිය හැක. කරුණාකර මෙය Skip කරන්න!`;
+            dangerWarning = `\n\n🚨 *AI WARNING: DO NOT TAKE THIS TRADE!*!`;
         }
 
         const out = `
