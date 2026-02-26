@@ -36,6 +36,10 @@ async function getTopDownSetups() {
             const volBreak   = indicators.checkVolumeBreakout(candles15m.slice(-50));
             const divergence = indicators.checkDivergence(candles15m.slice(-50));
 
+            // ✅ NEW: Harmonic & ICT Scanner Integration
+            const harmonicPattern = indicators.checkHarmonicPattern(candles15m.slice(-100));
+            const ictSilverBullet = indicators.checkICTSilverBullet(candles15m.slice(-10));
+
             let longScore = 0, shortScore = 0;
             let longReasons = [], shortReasons = [];
 
@@ -70,11 +74,19 @@ async function getTopDownSetups() {
             if (marketSMC.sweep.includes('Bullish') || marketSMC.choch.includes('Bullish')) { longScore++; longReasons.push("Sweep/ChoCH"); }
             if (marketSMC.sweep.includes('Bearish') || marketSMC.choch.includes('Bearish')) { shortScore++; shortReasons.push("Sweep/ChoCH"); }
 
-            if (longScore >= 4) {
-                foundSetups.push({ coin: coin.replace('USDT', ''), type: 'LONG 🟢', rawScore: longScore, score: `${longScore}/10`, price: currentPrice.toFixed(4), adx: adxData.value, entryPoint: ema50_15m.toFixed(4), reasons: longReasons.join(', ') });
+            // ✅ NEW: Add scores for Harmonic & ICT
+            if (harmonicPattern.includes("Bullish")) { longScore++; longReasons.push(harmonicPattern.split(' ')[1] + " 🦇"); }
+            if (harmonicPattern.includes("Bearish")) { shortScore++; shortReasons.push(harmonicPattern.split(' ')[1] + " 🦇"); }
+            
+            if (ictSilverBullet.includes("Bullish")) { longScore++; longReasons.push("ICT Time 🎯"); }
+            if (ictSilverBullet.includes("Bearish")) { shortScore++; shortReasons.push("ICT Time 🎯"); }
+
+            // ✅ UPGRADED THRESHOLD: දැන් අවම ලකුණු 5 ක් (14 න්) තිබිය යුතුය
+            if (longScore >= 5) {
+                foundSetups.push({ coin: coin.replace('USDT', ''), type: 'LONG 🟢', rawScore: longScore, score: `${longScore}/14`, price: currentPrice.toFixed(4), adx: adxData.value, entryPoint: ema50_15m.toFixed(4), reasons: longReasons.join(', ') });
             }
-            if (shortScore >= 4) {
-                foundSetups.push({ coin: coin.replace('USDT', ''), type: 'SHORT 🔴', rawScore: shortScore, score: `${shortScore}/10`, price: currentPrice.toFixed(4), adx: adxData.value, entryPoint: ema50_15m.toFixed(4), reasons: shortReasons.join(', ') });
+            if (shortScore >= 5) {
+                foundSetups.push({ coin: coin.replace('USDT', ''), type: 'SHORT 🔴', rawScore: shortScore, score: `${shortScore}/14`, price: currentPrice.toFixed(4), adx: adxData.value, entryPoint: ema50_15m.toFixed(4), reasons: shortReasons.join(', ') });
             }
         } catch (err) { }
     }
@@ -110,7 +122,6 @@ async (conn, mek, m, { reply }) => {
     activeTradeManager = setInterval(async () => {
         try {
             const currentSettings = await db.getSettings();
-            // ✅ FIX: Active සහ Pending යන දෙවර්ගයේම Trades ලබාගැනීම
             const activeTrades = await db.Trade.find({ status: { $in: ['active', 'pending'] } });
             if (!activeTrades || activeTrades.length === 0) return;
 
@@ -120,12 +131,10 @@ async (conn, mek, m, { reply }) => {
                     const currentPrice = parseFloat(res.data.price);
                     const isLong = trade.direction === 'LONG';
 
-                    // ─── PENDING ORDER CHECK (LIMIT ORDERS) ───
+                    // ─── PENDING ORDER CHECK ───
                     if (trade.status === 'pending') {
                         let triggered = false;
-                        // Long එකකදී current price එක entry එකට හෝ ඊට පහළට යා යුතුය
                         if (isLong && currentPrice <= trade.entry) triggered = true;
-                        // Short එකකදී current price එක entry එකට හෝ ඊට ඉහළට යා යුතුය
                         if (!isLong && currentPrice >= trade.entry) triggered = true;
 
                         if (triggered) {
@@ -133,10 +142,10 @@ async (conn, mek, m, { reply }) => {
                             await trade.save();
                             await conn.sendMessage(trade.userJid, { text: `✅ *ORDER FILLED!* 🔔\n🪙 ${trade.coin} (${trade.direction})\n\nMarket එක ඔබේ Entry Price ($${trade.entry}) වෙත පැමිණ ඇත.\n_දැන් සිට Trade එක Active වන අතර TP/SL Alert ක්‍රියාත්මක වේ!_ 🚀` });
                         }
-                        continue; // Order එක Active වුණා පමණයි. අදාල TP/SL check කිරීම මීළඟ විනාඩියේදී සිදුවේ.
+                        continue; 
                     }
 
-                    // ─── ACTIVE TRADE CHECKS (TP, SL, Trailing) ───
+                    // ─── ACTIVE TRADE CHECKS ───
                     if (currentSettings.partialTp && trade.tp1 && !trade.tp1Hit) {
                         const tp1Hit = isLong ? currentPrice >= trade.tp1 : currentPrice <= trade.tp1;
                         if (tp1Hit) {
@@ -185,7 +194,7 @@ async (conn, mek, m, { reply }) => {
             let setups = await getTopDownSetups();
             
             if (setups.length > 0) {
-                let outMsg = `🚀 *10-FACTOR SUPER SNIPER ALERT* 🚀\n_Top 5 Best Market Setups_ \n\n`;
+                let outMsg = `🚀 *14-FACTOR SUPER SNIPER ALERT* 🚀\n_Top 5 Best Market Setups_ \n\n`;
                 setups.forEach((s, i) => {
                     outMsg += `*${i + 1}. #${s.coin}* - ${s.type} (Score: ${s.score})\n   📍 Price: $${s.price}\n   🔥 ADX Trend: ${s.adx}\n   ✔️ Reasons: ${s.reasons}\n   ⏳ *Recommended:* 15m (Scalp)\n   🤖 AI Check: ${config.PREFIX}future ${s.coin} 15m\n\n`;
                 });
@@ -223,7 +232,7 @@ async (conn, mek, m, { reply }) => {
 cmd({
     pattern: "superscan",
     alias: ["scan", "scanner"],
-    desc: "10-Factor Super Market Scanner (Top 5 Setups)",
+    desc: "14-Factor Super Market Scanner (Top 5 Setups)",
     category: "crypto",
     react: "🚀",
     filename: __filename
@@ -231,12 +240,12 @@ cmd({
 async (conn, mek, m, { reply }) => {
     try {
         await m.react('⏳');
-        await reply(`🚀 *10-Factor Super Scanner ක්‍රියාත්මක වේ...*\n(Top 30 Trending Coins පරීක්ෂා කර හොඳම 5 තෝරාගනිමින් පවතී...)`);
+        await reply(`🚀 *14-Factor Super Scanner ක්‍රියාත්මක වේ...*\n(Top 30 Trending Coins පරීක්ෂා කර හොඳම 5 තෝරාගනිමින් පවතී...)`);
         
         let setups = await getTopDownSetups();
         
         if (setups.length === 0) {
-            return await reply(`╔═══════════════════════════╗\n║ 🔍 *SUPER SCAN RESULTS* ║\n╚═══════════════════════════╝\n\nමෙම මොහොතේ ලකුණු 4/10 ට වඩා ලබාගත් ෂුවර් Setups කිසිවක් මාකට් එකේ Top Coins 30 තුළ නොමැත. ⚪`);
+            return await reply(`╔═══════════════════════════╗\n║ 🔍 *SUPER SCAN RESULTS* ║\n╚═══════════════════════════╝\n\nමෙම මොහොතේ ලකුණු 5/14 ට වඩා ලබාගත් ෂුවර් Setups කිසිවක් මාකට් එකේ Top Coins 30 තුළ නොමැත. ⚪`);
         }
 
         let outMsg = `╔═══════════════════════════╗\n║ 🎯 *TOP 5 SNIPER SETUPS* ║\n╚═══════════════════════════╝\n\n`;

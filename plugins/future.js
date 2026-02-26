@@ -9,7 +9,7 @@ const smc = require('../lib/smartmoney');
 cmd({
     pattern: "future",
     alias: ["futures"],
-    desc: "Ultimate Futures AI - Smart Entry + MTF + Whale Walls",
+    desc: "Ultimate Futures AI - 14-Factor MTF + Harmonic + ICT + Whale Walls",
     category: "crypto",
     react: "🔴",
     filename: __filename
@@ -28,14 +28,14 @@ async (conn, mek, m, { reply, args }) => {
         if (timeframe === '1d' || timeframe === '1w') tradeCategory = "📅 Swing Trade";
 
         await m.react('⏳');
-        await reply(`⏳ *${coin} Full 12-Factor Analysis...*\n(MTF + Whale Liquidity Walls + Smart Entry)`);
+        await reply(`⏳ *${coin} Full 14-Factor Analysis...*\n(MTF + Whale Walls + Harmonic + ICT Silver Bullet)`);
 
         const currentCandles = await binance.getKlineData(coin, timeframe, 500);
         const candles5m      = await binance.getKlineData(coin, '5m', 50);   
         const candles1H      = await binance.getKlineData(coin, '1h', 60);
         const candles4H      = await binance.getKlineData(coin, '4h', 60);
         const liqData        = await binance.getLiquidationData(coin);
-        const whaleWalls     = await binance.getLiquidityWalls(coin); // ✅ NEW FEATURE Fetch
+        const whaleWalls     = await binance.getLiquidityWalls(coin); 
         
         const currentPrice   = parseFloat(currentCandles[currentCandles.length - 1][4]);
         const priceStr       = currentPrice.toFixed(4);
@@ -63,6 +63,10 @@ async (conn, mek, m, { reply, args }) => {
         const divergence = indicators.checkDivergence(currentCandles.slice(-50));
         const adxData   = indicators.calculateADX(currentCandles.slice(-50));
 
+        // ✅ NEW: Harmonic Pattern & ICT Silver Bullet
+        const harmonicPattern = indicators.checkHarmonicPattern(currentCandles.slice(-100));
+        const ictSilverBullet = indicators.checkICTSilverBullet(currentCandles.slice(-10));
+
         const marketSMC = smc.analyzeSMC(currentCandles.slice(-50));
         const atrVal    = parseFloat(atr);
         const direction = mainTrend.includes("Bullish") ? "LONG" : "SHORT";
@@ -73,7 +77,8 @@ async (conn, mek, m, { reply, args }) => {
         const vwapPrice = vwapMatch ? parseFloat(vwapMatch[1]) : 0;
         const obForDir  = direction === 'LONG' ? marketSMC.bullishOB : marketSMC.bearishOB;
 
-        const bestEntry = smc.selectBestEntry(priceStr, obForDir, marketSMC.fib618, poc, vwapPrice, direction, atrVal);
+        // ✅ FIX: Added harmonicPattern to selectBestEntry
+        const bestEntry = smc.selectBestEntry(priceStr, obForDir, marketSMC.fib618, poc, vwapPrice, direction, atrVal, harmonicPattern);
         const confirmation = smc.checkOBConfirmation(currentCandles.slice(-5), obForDir, direction);
         const orderSuggestion = smc.getOrderTypeSuggestion(bestEntry.price, currentPrice, direction);
 
@@ -153,6 +158,7 @@ _Strict Mode OFF කිරීමට: ${config.PREFIX}set 4 off_`
         if (macd.includes("Bearish")) { shortScore++; shortR.push("MACD Bear"); }
         if (marketSMC.sweep.includes("Bullish") || marketSMC.choch.includes("Bullish")) { longScore++; longR.push("Sweep/ChoCH"); }
         if (marketSMC.sweep.includes("Bearish") || marketSMC.choch.includes("Bearish")) { shortScore++; shortR.push("Sweep/ChoCH"); }
+        
         if (confirmation.confirmed) {
             if (direction === 'LONG')  { longScore++;  longR.push("OB Touch ✅"); }
             else                       { shortScore++; shortR.push("OB Touch ✅"); }
@@ -162,7 +168,14 @@ _Strict Mode OFF කිරීමට: ${config.PREFIX}set 4 off_`
             else                       { shortScore++; shortR.push("5m Aligned ✅"); }
         }
 
-        const maxScore    = 12; 
+        // ✅ NEW: SCORING FOR HARMONIC & ICT
+        if (harmonicPattern.includes("Bullish")) { longScore++; longR.push(harmonicPattern.split(' ')[1]); }
+        if (harmonicPattern.includes("Bearish")) { shortScore++; shortR.push(harmonicPattern.split(' ')[1]); }
+        
+        if (ictSilverBullet.includes("Bullish")) { longScore++; longR.push("ICT Time 🎯"); }
+        if (ictSilverBullet.includes("Bearish")) { shortScore++; shortR.push("ICT Time 🎯"); }
+
+        const maxScore    = 14;  // 👈 දත්ත 14ක් දක්වා ඉහළ නංවා ඇත
         const finalScore  = direction === 'LONG' ? longScore : shortScore;
         const finalReasons = (direction === 'LONG' ? longR : shortR).join(', ') || "None";
 
@@ -193,6 +206,8 @@ RRR Check: ${rrrCheck.reason}${rrrWarn}
 Market: ${marketState} | Trend: ${mainTrend} | MTF: 4H=${trend4H} 1H=${trend1H}
 ADX: ${adxData.status} 
 RSI: ${rsi} | VWAP: ${vwap} | Volume: ${volBreak} | Divergence: ${divergence} | MACD: ${macd}
+Harmonic Pattern: ${harmonicPattern}
+ICT Silver Bullet: ${ictSilverBullet}
 
 OB Bull: ${marketSMC.bullishOBDisplay} | OB Bear: ${marketSMC.bearishOBDisplay}
 Kill Zone: ${marketSMC.killzone} | Liquidation: ${liqData.sentiment}
@@ -224,6 +239,11 @@ JSON only:
         const trackMsg = data.direction !== "WAIT"
             ? `\n📌 Track: .track reply\n[TARGETS|ENTRY:${data.entry}|TP:${data.tp2}|SL:${data.sl}]` : "";
 
+        // ✅ NEW: Display Harmonic & ICT in output
+        let extraInfo = "";
+        if (harmonicPattern !== "None") extraInfo += `\n📐 *Harmonic PRZ:* ${harmonicPattern}`;
+        if (ictSilverBullet !== "Active Time (No FVG)" && ictSilverBullet !== "None") extraInfo += `\n🕒 *ICT Strategy:* ${ictSilverBullet}`;
+
         const out = `
 ╔═══════════════════════════╗
 ║ 🎯 *PRO SNIPER ANALYSIS* ║
@@ -233,7 +253,7 @@ JSON only:
 📌 *Trade Style:* ${tradeCategory}
 ⭐ *Score: ${finalScore}/${maxScore}* ✔️ ${finalReasons}
 📊 *ADX Trend:* ${adxData.status}
-⏱️ ${marketSMC.killzone}${asianWarning}
+⏱️ ${marketSMC.killzone}${asianWarning}${extraInfo}
 
 *🔬 5m MTF Confirmation:*
 ${mtf5m.status}
