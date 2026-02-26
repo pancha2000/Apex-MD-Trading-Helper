@@ -9,7 +9,7 @@ const smc = require('../lib/smartmoney');
 cmd({
     pattern: "future",
     alias: ["futures"],
-    desc: "Ultimate Futures AI - Smart Entry + MTF + RRR Filter",
+    desc: "Ultimate Futures AI - Smart Entry + MTF + Whale Walls",
     category: "crypto",
     react: "🔴",
     filename: __filename
@@ -23,26 +23,23 @@ async (conn, mek, m, { reply, args }) => {
         if (!coin.endsWith('USDT')) coin += 'USDT';
         let timeframe = args[1] ? args[1].toLowerCase() : '15m';
 
-        // ✅ Trade Type තීරණය කිරීම (Scalp/Intraday/Swing)
         let tradeCategory = "⚡ Scalp Trade";
         if (timeframe === '30m' || timeframe === '1h' || timeframe === '4h') tradeCategory = "🌅 Intraday Trade";
         if (timeframe === '1d' || timeframe === '1w') tradeCategory = "📅 Swing Trade";
 
         await m.react('⏳');
-        await reply(`⏳ *${coin} Full 12-Factor Analysis...*\n(MTF + Divergence + Volume Spikes + Smart Entry)`);
+        await reply(`⏳ *${coin} Full 12-Factor Analysis...*\n(MTF + Whale Liquidity Walls + Smart Entry)`);
 
-        // ── Data Fetch ─────────────────────────────────────
         const currentCandles = await binance.getKlineData(coin, timeframe, 500);
         const candles5m      = await binance.getKlineData(coin, '5m', 50);   
         const candles1H      = await binance.getKlineData(coin, '1h', 60);
         const candles4H      = await binance.getKlineData(coin, '4h', 60);
         const liqData        = await binance.getLiquidationData(coin);
-        const currentPrice   = parseFloat(currentCandles[currentCandles.length - 1][4]);
+        const whaleWalls     = await binance.getLiquidityWalls(coin); // ✅ NEW FEATURE Fetch
         
-        // ✅ FIX: දශම 4කට හැදීම
+        const currentPrice   = parseFloat(currentCandles[currentCandles.length - 1][4]);
         const priceStr       = currentPrice.toFixed(4);
 
-        // ── Indicators ─────────────────────────────────────
         const ema200 = parseFloat(indicators.calculateEMA(currentCandles, 200));
         const ema50  = parseFloat(indicators.calculateEMA(currentCandles.slice(-100), 50));
         const ema21  = parseFloat(indicators.calculateEMA(currentCandles.slice(-50), 21));
@@ -70,10 +67,8 @@ async (conn, mek, m, { reply, args }) => {
         const atrVal    = parseFloat(atr);
         const direction = mainTrend.includes("Bullish") ? "LONG" : "SHORT";
 
-        // ── Feature 1: 5m MTF Confirmation ──────────────
         const mtf5m = indicators.confirmEntry5m(candles5m, direction);
 
-        // ── Smart Entry Zone ────────────────────────────────
         const vwapMatch = vwap.match(/\$([0-9.]+)/);
         const vwapPrice = vwapMatch ? parseFloat(vwapMatch[1]) : 0;
         const obForDir  = direction === 'LONG' ? marketSMC.bullishOB : marketSMC.bearishOB;
@@ -82,7 +77,6 @@ async (conn, mek, m, { reply, args }) => {
         const confirmation = smc.checkOBConfirmation(currentCandles.slice(-5), obForDir, direction);
         const orderSuggestion = smc.getOrderTypeSuggestion(bestEntry.price, currentPrice, direction);
 
-        // ── TP / SL ─────────────────────────────────────────
         const entryPrice = parseFloat(bestEntry.price);
         let smartSL, tp1, tp2;
 
@@ -100,7 +94,6 @@ async (conn, mek, m, { reply, args }) => {
             tp2 = (entryPrice - atrVal * 4.0);
         }
 
-        // ✅ FIX: දශම 4කට හැදීම
         const entryStr = entryPrice.toFixed(4);
         const slStr    = parseFloat(smartSL).toFixed(4);
         const tp1Str   = parseFloat(tp1).toFixed(4);
@@ -110,7 +103,6 @@ async (conn, mek, m, { reply, args }) => {
         const rrrVal   = riskAmount > 0 ? (Math.abs(parseFloat(tp2Str) - entryPrice) / riskAmount) : 0;
         const rrrStr   = rrrVal.toFixed(2);
 
-        // ── Feature 2: RRR Pre-Filter ────────────────────
         const settings = await db.getSettings();
         const rrrCheck = indicators.checkRRR(entryStr, tp2Str, slStr, settings.minRRR || 1.5);
 
@@ -128,7 +120,6 @@ _Strict Mode OFF කිරීමට: ${config.PREFIX}set 4 off_`
             );
         }
 
-        // ── Risk Management ─────────────────────────────────
         const userMargin = await db.getMargin(m.sender) || 0;
         let levText = "Set .margin", riskText = "Set .margin", marginText = "Set .margin";
         if (userMargin > 0) {
@@ -140,7 +131,6 @@ _Strict Mode OFF කිරීමට: ${config.PREFIX}set 4 off_`
             levText    = `${Math.min(Math.ceil((riskAmt / slDist) / deployMgn), 100)}x (Iso)`;
         }
 
-        // ── 12-Factor Confluence Score ──────────────────────
         let longScore = 0, shortScore = 0, longR = [], shortR = [];
 
         if (trend4H.includes("Bullish") && trend1H.includes("Bullish")) { longScore++;  longR.push("MTF Bull"); }
@@ -179,7 +169,6 @@ _Strict Mode OFF කිරීමට: ${config.PREFIX}set 4 off_`
         const asianWarning = marketSMC.killzone.includes("Asian")
             ? "\n⚠️ *ASIAN SESSION* - Fakeout risk ඉහළ. Wait recommended." : "";
 
-        // 🛑 Hard Block: දුර්වල Trades ප්‍රතික්ෂේප කිරීම (Strict Mode)
         if (settings.strictMode && finalScore < 5) {
             return await reply(
 `⛔ *TRADE REJECTED - Strict Mode* ⛔
@@ -194,7 +183,6 @@ _Strict Mode OFF කිරීමට: ${config.PREFIX}set 4 off_`
             );
         }
 
-        // ── AI Prompt ───────────────────────────────────────
         const rrrWarn = !rrrCheck.pass ? `\n⚠️ RRR below minimum (1:${rrrCheck.rrr}) - mention risk warning` : "";
         const prompt = `Analyze ${coin} FUTURES. Current: $${priceStr}
 
@@ -269,6 +257,11 @@ RRR: ${data.rrr} ${rrrCheck.pass ? '✅' : '⚠️'}
 💰 Margin:   ${data.margin}
 🛡️ Risk:     ${data.risk}
 🔥 Confidence: ${data.confidence}
+
+*🐋 Whale Tracking (Orderbook):*
+🟢 Buy Wall (Support): $${whaleWalls.supportWall} (${whaleWalls.supportVol} USDT)
+🔴 Sell Wall (Resist): $${whaleWalls.resistWall} (${whaleWalls.resistVol} USDT)
+📊 CVD Pressure: ${whaleWalls.cvd}
 
 *💡 Analysis:*
 ${data.trend}

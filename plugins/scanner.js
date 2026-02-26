@@ -6,7 +6,6 @@ const smc = require('../lib/smartmoney');
 const db = require('../lib/database');
 const axios = require('axios');
 
-// 🧠 1. SUPER SCANNER: 10-Factor Scoring System (Top 5 Filter)
 async function getTopDownSetups() {
     let foundSetups = [];
     const dynamicCoins = await binance.getTopTrendingCoins(30);
@@ -84,13 +83,12 @@ async function getTopDownSetups() {
     return foundSetups.slice(0, 5);
 }
 
-// 🔄 2. Background Engine Controls (Auto-Scan & Trade Manager)
 let activeScannerLoop = null;
 let activeTradeManager = null;
 
 cmd({
     pattern: "scanstart",
-    desc: "Start Auto Scanner & Trade Manager in Current Chat",
+    desc: "Start Auto Scanner & Trade Manager",
     category: "owner",
     isOwner: true,
     react: "🚀",
@@ -101,17 +99,16 @@ async (conn, mek, m, { reply }) => {
         return await reply("⚠️ Auto Scanner & Trade Manager දැනටමත් ක්‍රියාත්මකයි!\nනැවැත්වීමට `.scanstop` භාවිතා කරන්න.");
     }
 
-    // ✅ FIX 2: Check if AutoSignal setting is ON before starting
     const settings = await db.getSettings();
     if (!settings.autoSignal) {
-        return await reply("⚠️ *අවවාදයයි:* ඔබේ Bot Settings වල Auto Signals OFF වී ඇත!\nකරුණාකර පළමුව `.set 1 on` ලෙස යවා Auto Signal සක්‍රිය කර, නැවත `.scanstart` ලබා දෙන්න.");
+        return await reply("⚠️ *අවවාදයයි:* Bot Settings වල Auto Signals OFF වී ඇත!\nපළමුව `.set 1 on` ලෙස යවා සක්‍රිය කර, නැවත `.scanstart` ලබා දෙන්න.");
     }
 
-    await reply("✅ *AUTO ENGINE STARTED!*\n\nමෙම චැට් එකට සෑම විනාඩි 5කට වරක්ම Top 5 Signals ලැබෙනු ඇත. පළමු ස්කෑන් කිරීම දැන් සිදුවේ... ⏳");
-    
-    const targetChat = m.chat; 
+    // ✅ FIX: Chat ID එක හරියටම අඳුරගන්නවා (m.chat වෙනුවට m.from)
+    const targetChat = m.from || mek.from;
 
-    // ─── TASK 1: ACTIVE TRADE MANAGER (Every 1 Minute) ───
+    await reply("✅ *AUTO ENGINE STARTED!*\n\nමෙම චැට් එකට සෑම විනාඩි 5කට වරක්ම Top 5 Signals ලැබෙනු ඇත. පළමු ස්කෑන් කිරීම දැන් සිදුවේ... ⏳");
+
     activeTradeManager = setInterval(async () => {
         try {
             const currentSettings = await db.getSettings();
@@ -164,11 +161,10 @@ async (conn, mek, m, { reply }) => {
         } catch(err) { }
     }, 60000);
 
-    // ─── TASK 2: SUPER AUTO SIGNALS ───
     const runAutoScan = async () => {
         try {
             const currentSettings = await db.getSettings();
-            if (!currentSettings.autoSignal) return; // Settings off නම් යවන්නේ නෑ
+            if (!currentSettings.autoSignal) return;
 
             let setups = await getTopDownSetups();
             
@@ -179,13 +175,12 @@ async (conn, mek, m, { reply }) => {
                 });
                 await conn.sendMessage(targetChat, { text: outMsg.trim() });
             }
-        } catch (error) { }
+        } catch (error) { 
+            console.log("Scanner Logic Error: ", error.message);
+        }
     };
 
-    // ✅ FIX 1: කමාන්ඩ් එක ගැහුව ගමන්ම පළවෙනි ස්කෑන් එක යවනවා (විනාඩි 5ක් බලන් ඉන්නේ නෑ)
     runAutoScan();
-
-    // ඊටපස්සේ සෑම විනාඩි 5කට වරක්ම run වෙනවා
     activeScannerLoop = setInterval(runAutoScan, 5 * 60 * 1000);
 });
 
@@ -211,7 +206,6 @@ async (conn, mek, m, { reply }) => {
     await reply("🛑 Auto Scanner සහ Trade Manager සාර්ථකව නවත්වන ලදී.");
 });
 
-// 🎯 3. MANUAL COMMAND (.superscan)
 cmd({
     pattern: "superscan",
     alias: ["scan", "scanner"],
