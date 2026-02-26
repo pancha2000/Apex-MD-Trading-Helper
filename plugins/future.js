@@ -262,7 +262,7 @@ RRR: ${data.rrr} ${rrrCheck.pass ? '✅' : '⚠️'}
 *💡 Analysis:*
 ${data.trend}
 ${data.smc_summary}${zoneWarn}${rrrWarnMsg}
-
+🖼️ Chart: .chart ${coin} 15m
 ⚡ _.margin_ ලෙ capital set කරන්න.${trackMsg}`;
 
         await reply(out.trim());
