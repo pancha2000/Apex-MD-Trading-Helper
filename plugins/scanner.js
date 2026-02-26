@@ -71,7 +71,6 @@ async function getTopDownSetups() {
             if (marketSMC.sweep.includes('Bullish') || marketSMC.choch.includes('Bullish')) { longScore++; longReasons.push("Sweep/ChoCH"); }
             if (marketSMC.sweep.includes('Bearish') || marketSMC.choch.includes('Bearish')) { shortScore++; shortReasons.push("Sweep/ChoCH"); }
 
-            // ✅ FIX: Price .toFixed(4) වලින් දශම 4කට හැදීම
             if (longScore >= 4) {
                 foundSetups.push({ coin: coin.replace('USDT', ''), type: 'LONG 🟢', rawScore: longScore, score: `${longScore}/10`, price: currentPrice.toFixed(4), adx: adxData.value, entryPoint: ema50_15m.toFixed(4), reasons: longReasons.join(', ') });
             }
@@ -102,14 +101,20 @@ async (conn, mek, m, { reply }) => {
         return await reply("⚠️ Auto Scanner & Trade Manager දැනටමත් ක්‍රියාත්මකයි!\nනැවැත්වීමට `.scanstop` භාවිතා කරන්න.");
     }
 
-    await reply("✅ *AUTO ENGINE STARTED!*\n\nමෙම චැට් එකට සෑම විනාඩි 5කට වරක්ම Top 5 Signals ලැබෙනු ඇත. තවද ඔබේ Active Trades වල TP/SL Alert පසුබිමෙන් ක්‍රියාත්මක විය. 🛡️\n(නැවැත්වීමට `.scanstop` භාවිතා කරන්න)");
+    // ✅ FIX 2: Check if AutoSignal setting is ON before starting
+    const settings = await db.getSettings();
+    if (!settings.autoSignal) {
+        return await reply("⚠️ *අවවාදයයි:* ඔබේ Bot Settings වල Auto Signals OFF වී ඇත!\nකරුණාකර පළමුව `.set 1 on` ලෙස යවා Auto Signal සක්‍රිය කර, නැවත `.scanstart` ලබා දෙන්න.");
+    }
+
+    await reply("✅ *AUTO ENGINE STARTED!*\n\nමෙම චැට් එකට සෑම විනාඩි 5කට වරක්ම Top 5 Signals ලැබෙනු ඇත. පළමු ස්කෑන් කිරීම දැන් සිදුවේ... ⏳");
     
     const targetChat = m.chat; 
 
     // ─── TASK 1: ACTIVE TRADE MANAGER (Every 1 Minute) ───
     activeTradeManager = setInterval(async () => {
         try {
-            const settings = await db.getSettings();
+            const currentSettings = await db.getSettings();
             const activeTrades = await db.Trade.find({ status: 'active' });
             if (!activeTrades || activeTrades.length === 0) return;
 
@@ -119,7 +124,7 @@ async (conn, mek, m, { reply }) => {
                     const currentPrice = parseFloat(res.data.price);
                     const isLong = trade.direction === 'LONG';
 
-                    if (settings.partialTp && trade.tp1 && !trade.tp1Hit) {
+                    if (currentSettings.partialTp && trade.tp1 && !trade.tp1Hit) {
                         const tp1Hit = isLong ? currentPrice >= trade.tp1 : currentPrice <= trade.tp1;
                         if (tp1Hit) {
                             trade.tp1Hit = true;
@@ -128,7 +133,7 @@ async (conn, mek, m, { reply }) => {
                         }
                     }
 
-                    if (settings.trailingSl) {
+                    if (currentSettings.trailingSl) {
                         const riskAmount = Math.abs(trade.entry - trade.sl);
                         const breakEvenTarget = isLong ? (trade.entry + riskAmount) : (trade.entry - riskAmount);
                         let shouldTrail = false;
@@ -159,11 +164,11 @@ async (conn, mek, m, { reply }) => {
         } catch(err) { }
     }, 60000);
 
-    // ─── TASK 2: SUPER AUTO SIGNALS (Every 5 Minutes) ───
-    activeScannerLoop = setInterval(async () => {
+    // ─── TASK 2: SUPER AUTO SIGNALS ───
+    const runAutoScan = async () => {
         try {
-            const settings = await db.getSettings();
-            if (!settings.autoSignal) return;
+            const currentSettings = await db.getSettings();
+            if (!currentSettings.autoSignal) return; // Settings off නම් යවන්නේ නෑ
 
             let setups = await getTopDownSetups();
             
@@ -175,7 +180,13 @@ async (conn, mek, m, { reply }) => {
                 await conn.sendMessage(targetChat, { text: outMsg.trim() });
             }
         } catch (error) { }
-    }, 5 * 60 * 1000);
+    };
+
+    // ✅ FIX 1: කමාන්ඩ් එක ගැහුව ගමන්ම පළවෙනි ස්කෑන් එක යවනවා (විනාඩි 5ක් බලන් ඉන්නේ නෑ)
+    runAutoScan();
+
+    // ඊටපස්සේ සෑම විනාඩි 5කට වරක්ම run වෙනවා
+    activeScannerLoop = setInterval(runAutoScan, 5 * 60 * 1000);
 });
 
 cmd({
