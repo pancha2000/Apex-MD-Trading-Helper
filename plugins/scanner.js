@@ -21,7 +21,6 @@ async function getTopDownSetups() {
             const candles4h  = await binance.getKlineData(coin, '4h', 100);
 
             const currentPrice = parseFloat(candles15m[candles15m.length - 1][4]);
-
             const adxData = indicators.calculateADX(candles15m.slice(-50));
 
             // ── Indicators ──
@@ -75,29 +74,29 @@ async function getTopDownSetups() {
             if (marketSMC.sweep.includes('Bullish') || marketSMC.choch.includes('Bullish')) { longScore++; longReasons.push("Sweep/ChoCH"); }
             if (marketSMC.sweep.includes('Bearish') || marketSMC.choch.includes('Bearish')) { shortScore++; shortReasons.push("Sweep/ChoCH"); }
 
-            // 🏆 ලකුණු 4 හෝ ඊට වැඩි ඒවා එකතු කිරීම (rawScore එකත් එක්ක)
+            // 🏆 ලකුණු 4 හෝ ඊට වැඩි ඒවා එකතු කිරීම
             if (longScore >= 4) {
                 foundSetups.push({ coin: coin.replace('USDT', ''), type: 'LONG 🟢', rawScore: longScore, score: `${longScore}/10`, price: currentPrice.toFixed(2), adx: adxData.value, entryPoint: ema50_15m.toFixed(2), reasons: longReasons.join(', ') });
             }
             if (shortScore >= 4) {
                 foundSetups.push({ coin: coin.replace('USDT', ''), type: 'SHORT 🔴', rawScore: shortScore, score: `${shortScore}/10`, price: currentPrice.toFixed(2), adx: adxData.value, entryPoint: ema50_15m.toFixed(2), reasons: shortReasons.join(', ') });
             }
-
-        } catch (err) { 
-            console.log(`Error scanning ${coin}:`, err.message); 
-        }
+        } catch (err) { }
     }
 
-    // ⭐ අලුත් වෙනස: ලකුණු අනුව පිළිවෙළට හදලා (Sort), වැඩිම ලකුණු ගත්තු 5 විතරක් තෝරා ගැනීම!
     foundSetups.sort((a, b) => b.rawScore - a.rawScore);
     return foundSetups.slice(0, 5);
 }
 
-// 🔄 2. Background Scanner Engine
-function startScanner(conn) {
+// 🔄 2. Background Scanner Engine (Auto-Start Trick)
+let autoScanStarted = false;
+
+cmd({ on: "body" }, async (conn, mek, m) => {
+    // මේකෙන් වෙන්නේ බොට්ට පළවෙනි මැසේජ් එක ආපු ගමන් ස්කෑනර් එක ස්ටාර්ට් වෙන එකයි
+    if (autoScanStarted) return;
+    autoScanStarted = true;
+
     console.log('🚀 Super Scanner Engine Started...');
-    
-    // ⭐ අලුත් වෙනස: බොට්ගේ නම්බර් එක වෙනුවට ඔයාගේ Owner නම්බර් එකම ගන්නවා (Auto Signals වැඩ කරන්න)
     let ownerJid = config.OWNER_NUMBER + '@s.whatsapp.net'; 
 
     conn.sendMessage(ownerJid, { 
@@ -154,7 +153,7 @@ function startScanner(conn) {
                     }
                 } catch(e) {}
             }
-        } catch(err) { console.log("Trade Manager Error:", err.message); }
+        } catch(err) { }
     }, 60000); 
 
     // ─── TASK 2: SUPER AUTO SIGNALS ───
@@ -173,9 +172,9 @@ function startScanner(conn) {
                 });
                 await conn.sendMessage(ownerJid, { text: outMsg.trim() });
             }
-        } catch (error) { console.log("AutoSignal Error:", error.message); }
+        } catch (error) { }
     }, 5 * 60 * 1000);
-}
+});
 
 // 🎯 3. MANUAL COMMAND (.superscan)
 cmd({
@@ -206,5 +205,3 @@ async (conn, mek, m, { reply }) => {
         await m.react('✅');
     } catch (e) { await reply('❌ Error: ' + e.message); }
 });
-
-module.exports = { startScanner };
