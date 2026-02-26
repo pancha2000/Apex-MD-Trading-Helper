@@ -20,24 +20,24 @@ async (conn, mek, m, { reply }) => {
 ╚═══════════════════════════╝
 
 *1. Auto Signals:* ${s.autoSignal ? '✅ ON' : '❌ OFF'}
-   _(15m වරක් BTC/ETH/SOL auto scan)_
+   _(සෑම විනාඩි 5කට වරක් Top 30 Coins ස්කෑන් කිරීම)_
 
 *2. Trailing SL:* ${s.trailingSl ? '✅ ON' : '❌ OFF'}
-   _(50% profit ලැබූ විට SL Entry ලෙ move)_
+   _(Market 1:1 Profit ආ විට SL අගය Entry වෙත ගෙන ඒම)_
 
 *3. Trend Filter:* ${s.trendFilter ? '✅ ON' : '❌ OFF'}
-   _(Extreme Fear ලෙ trades block)_
+   _(Extreme Fear Market එකේදී Trades Block කිරීම)_
 
 *4. Strict Mode:* ${s.strictMode ? '✅ ON' : '❌ OFF'}
-   _(Score <4 හෝ RRR fail ලෙ WAIT output)_
+   _(Score මදි වූ විට හෝ RRR Fail වූ විට Trades Block කිරීම)_
 
 *5. Partial TP Alerts:* ${s.partialTp ? '✅ ON' : '❌ OFF'}
-   _(TP1 hit ලෙ 50% close alert)_
+   _(TP1 Hit වූ විට 50% Close කිරීමට Alert එකක් දීම)_
 
 *6. Min RRR:* ${s.minRRR || 1.5}x
-   _(ඉහළ ගිය trades filter කිරීමේ minimum)_
+   _(Trade එකක් ගැනීමට තිබිය යුතු අවම RRR අගය)_
 
-📌 *වෙනස් කිරීමට:*
+📌 *වෙනස් කිරීමට පහත කමාන්ඩ්ස් භාවිතා කරන්න:*
 ${config.PREFIX}set 1 on/off  → Auto Signals
 ${config.PREFIX}set 2 on/off  → Trailing SL
 ${config.PREFIX}set 3 on/off  → Trend Filter
@@ -68,15 +68,14 @@ async (conn, mek, m, { reply, args }) => {
         let updateData = {}, featureName = "";
 
         if (num === '1') { updateData.autoSignal = state;  featureName = "Auto Signals"; }
-        else if (num === '2') { updateData.trailingSl = state;  featureName = "Trailing SL"; }
+        else if (num === '2') { updateData.trailingSl = state;  featureName = "Trailing SL (Risk-Free Mode)"; }
         else if (num === '3') { updateData.trendFilter = state; featureName = "Trend Filter"; }
         else if (num === '4') { updateData.strictMode = state;  featureName = "Strict Mode"; }
         else if (num === '5') { updateData.partialTp = state;   featureName = "Partial TP Alerts"; }
         else if (num === '6') {
-            // ✅ RRR number value
             const rrrVal = parseFloat(value);
             if (isNaN(rrrVal) || rrrVal < 1.0 || rrrVal > 5.0) {
-                return await reply('❌ Min RRR 1.0 - 5.0 අතර විය යුතුය.\nඋදා: .set 6 1.5');
+                return await reply(`❌ Min RRR 1.0 - 5.0 අතර විය යුතුය.\nඋදා: ${config.PREFIX}set 6 1.5`);
             }
             updateData.minRRR = rrrVal;
             featureName = `Min RRR → ${rrrVal}x`;
@@ -84,7 +83,7 @@ async (conn, mek, m, { reply, args }) => {
         else return await reply('❌ 1-6 අතර අංකයක් භාවිතා කරන්න.');
 
         await db.updateSettings(updateData);
-        await reply(`✅ *${featureName}* ${num === '6' ? 'update' : (state ? 'ON' : 'OFF')} කරන ලදී!`);
+        await reply(`✅ *${featureName}* ${num === '6' ? 'Update' : (state ? 'ON' : 'OFF')} කරන ලදී!`);
         await m.react('✅');
     } catch (e) { await reply('❌ Error: ' + e.message); }
 });
