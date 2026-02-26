@@ -14,7 +14,6 @@ const path = require('path');
 const config = require('./config');
 const { connectDB } = require('./lib/database');
 const { handler } = require('./lib/commands');
-const { startScanner } = require('./lib/scanner');
 
 let serialize;
 if (fs.existsSync('./lib/functions.js')) {
@@ -60,13 +59,9 @@ async function downloadSession() {
     }
 }
 
-// ✅ FIX: Flags දෙකම Function එකෙන් එළියට (Global Scope එකට) ගත්තා!
-// මේ නිසා බොට් Disconnect වෙලා Reconnect වුණත් මේ අගයන් Reset වෙන්නේ නෑ.
 let isFirstStart = true;
-let isScannerStarted = false;
 
 async function startBot() {
-    // Session පළමු සැරේ පමණක් download කරයි
     if (isFirstStart) {
         await downloadSession();
         isFirstStart = false;
@@ -104,15 +99,7 @@ async function startBot() {
             }
         } else if (connection === 'open') {
             console.log('✅ Bot Connected to WhatsApp Successfully!');
-            
-            // ✅ FIX: Scanner එක රන් වෙන්නේ පළමු වතාවට පමණයි! (Multiple Loops හැදෙන්නේ නෑ)
-            if (!isScannerStarted) {
-                console.log('🔄 Starting Background Scanners...');
-                startScanner(conn);
-                isScannerStarted = true;
-            } else {
-                console.log('⚡ Scanner is already running. Reconnected safely.');
-            }
+            console.log('💡 Type .scanstart in your WhatsApp to activate the Auto-Scanner!');
         }
     });
 
