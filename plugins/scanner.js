@@ -71,11 +71,12 @@ async function getTopDownSetups() {
             if (marketSMC.sweep.includes('Bullish') || marketSMC.choch.includes('Bullish')) { longScore++; longReasons.push("Sweep/ChoCH"); }
             if (marketSMC.sweep.includes('Bearish') || marketSMC.choch.includes('Bearish')) { shortScore++; shortReasons.push("Sweep/ChoCH"); }
 
+            // ✅ FIX: Price .toFixed(4) වලින් දශම 4කට හැදීම
             if (longScore >= 4) {
-                foundSetups.push({ coin: coin.replace('USDT', ''), type: 'LONG 🟢', rawScore: longScore, score: `${longScore}/10`, price: currentPrice.toFixed(2), adx: adxData.value, entryPoint: ema50_15m.toFixed(2), reasons: longReasons.join(', ') });
+                foundSetups.push({ coin: coin.replace('USDT', ''), type: 'LONG 🟢', rawScore: longScore, score: `${longScore}/10`, price: currentPrice.toFixed(4), adx: adxData.value, entryPoint: ema50_15m.toFixed(4), reasons: longReasons.join(', ') });
             }
             if (shortScore >= 4) {
-                foundSetups.push({ coin: coin.replace('USDT', ''), type: 'SHORT 🔴', rawScore: shortScore, score: `${shortScore}/10`, price: currentPrice.toFixed(2), adx: adxData.value, entryPoint: ema50_15m.toFixed(2), reasons: shortReasons.join(', ') });
+                foundSetups.push({ coin: coin.replace('USDT', ''), type: 'SHORT 🔴', rawScore: shortScore, score: `${shortScore}/10`, price: currentPrice.toFixed(4), adx: adxData.value, entryPoint: ema50_15m.toFixed(4), reasons: shortReasons.join(', ') });
             }
         } catch (err) { }
     }
@@ -84,22 +85,29 @@ async function getTopDownSetups() {
     return foundSetups.slice(0, 5);
 }
 
-// 🔄 2. Background Scanner Engine (Auto-Start Logic)
-let isEngineRunning = false;
+// 🔄 2. Background Engine Controls (Auto-Scan & Trade Manager)
+let activeScannerLoop = null;
+let activeTradeManager = null;
 
-function startBackgroundEngine(conn) {
-    if (isEngineRunning) return;
-    isEngineRunning = true;
+cmd({
+    pattern: "scanstart",
+    desc: "Start Auto Scanner & Trade Manager in Current Chat",
+    category: "owner",
+    isOwner: true,
+    react: "🚀",
+    filename: __filename
+},
+async (conn, mek, m, { reply }) => {
+    if (activeScannerLoop || activeTradeManager) {
+        return await reply("⚠️ Auto Scanner & Trade Manager දැනටමත් ක්‍රියාත්මකයි!\nනැවැත්වීමට `.scanstop` භාවිතා කරන්න.");
+    }
 
-    console.log('🚀 Super Scanner Engine Started...');
-    let ownerJid = config.OWNER_NUMBER + '@s.whatsapp.net'; 
+    await reply("✅ *AUTO ENGINE STARTED!*\n\nමෙම චැට් එකට සෑම විනාඩි 5කට වරක්ම Top 5 Signals ලැබෙනු ඇත. තවද ඔබේ Active Trades වල TP/SL Alert පසුබිමෙන් ක්‍රියාත්මක විය. 🛡️\n(නැවැත්වීමට `.scanstop` භාවිතා කරන්න)");
+    
+    const targetChat = m.chat; 
 
-    conn.sendMessage(ownerJid, { 
-        text: `✅ *SUPER SCANNER ACTIVATED!* 🚀\n\n10-Factor Auto Scanner සහ Trade Manager ක්‍රියාත්මක විය.\n\n_බොට් දැන් සෑම විනාඩි 5කට වරක්ම Top 30 Coins පරීක්ෂා කර, ඉහළම ලකුණු ගත් හොඳම Trade Setups පමණක් ඔබට Alert එකක් එවනු ඇත._ 🛡️`
-    }).catch(err => console.log("Startup Alert Error:", err.message));
-
-    // ─── TASK 1: ACTIVE TRADE MANAGER ───
-    setInterval(async () => {
+    // ─── TASK 1: ACTIVE TRADE MANAGER (Every 1 Minute) ───
+    activeTradeManager = setInterval(async () => {
         try {
             const settings = await db.getSettings();
             const activeTrades = await db.Trade.find({ status: 'active' });
@@ -116,7 +124,7 @@ function startBackgroundEngine(conn) {
                         if (tp1Hit) {
                             trade.tp1Hit = true;
                             await trade.save();
-                            await conn.sendMessage(trade.userJid, { text: `✅ *PARTIAL TP HIT!* 🎯\n🪙 ${trade.coin} (${trade.direction})\nMarket එක TP1 ($${trade.tp1}) වෙත පැමිණ ඇත. ලාභයෙන් 50% ක් Close කරන්න!` });
+                            await conn.sendMessage(trade.userJid, { text: `✅ *PARTIAL TP HIT!* 🎯\n🪙 ${trade.coin} (${trade.direction})\nMarket එක TP1 ($${parseFloat(trade.tp1).toFixed(4)}) වෙත පැමිණ ඇත. ලාභයෙන් 50% ක් Close කරන්න!` });
                         }
                     }
 
@@ -128,7 +136,7 @@ function startBackgroundEngine(conn) {
                         else if (!isLong && currentPrice <= breakEvenTarget && trade.sl > trade.entry) { trade.sl = trade.entry; shouldTrail = true; }
                         if (shouldTrail) {
                             await trade.save();
-                            await conn.sendMessage(trade.userJid, { text: `🛡️ *FAST TRAILING SL ACTIVATED!*\n🪙 ${trade.coin} (${trade.direction})\nMarket එක 1:1 Risk/Reward කලාපයට පැමිණ ඇත.\n✅ Stop Loss අගය Entry ($${trade.entry}) වෙත ගෙන එන ලදී.\n_මෙම Trade එක දැන් 100% ක් Risk-Free වේ!_ 🎉` });
+                            await conn.sendMessage(trade.userJid, { text: `🛡️ *FAST TRAILING SL ACTIVATED!*\n🪙 ${trade.coin} (${trade.direction})\nMarket එක 1:1 Risk/Reward කලාපයට පැමිණ ඇත.\n✅ Stop Loss අගය Entry ($${parseFloat(trade.entry).toFixed(4)}) වෙත ගෙන එන ලදී.\n_මෙම Trade එක දැන් 100% ක් Risk-Free වේ!_ 🎉` });
                         }
                     }
 
@@ -144,32 +152,53 @@ function startBackgroundEngine(conn) {
                     if (closed) {
                         await db.closeTrade(trade._id, result, pnlPct);
                         const emoji = result === 'WIN' ? '🏆' : result === 'BREAK-EVEN' ? '🛡️' : '💀';
-                        await conn.sendMessage(trade.userJid, { text: `${emoji} *TRADE CLOSED!*\n🪙 ${trade.coin} (${trade.direction})\nප්‍රතිඵලය: *${result}*\nවසන ලද මිල: $${currentPrice}\n\n_මෙම දත්ත ඔබගේ .stats වෙත එක් කරන ලදී._` });
+                        await conn.sendMessage(trade.userJid, { text: `${emoji} *TRADE CLOSED!*\n🪙 ${trade.coin} (${trade.direction})\nප්‍රතිඵලය: *${result}*\nවසන ලද මිල: $${currentPrice.toFixed(4)}\n\n_මෙම දත්ත ඔබගේ .stats වෙත එක් කරන ලදී._` });
                     }
                 } catch(e) {}
             }
         } catch(err) { }
-    }, 60000); 
+    }, 60000);
 
-    // ─── TASK 2: SUPER AUTO SIGNALS ───
-    setInterval(async () => {
+    // ─── TASK 2: SUPER AUTO SIGNALS (Every 5 Minutes) ───
+    activeScannerLoop = setInterval(async () => {
         try {
             const settings = await db.getSettings();
             if (!settings.autoSignal) return;
 
-            let ownerJid = config.OWNER_NUMBER + '@s.whatsapp.net'; 
             let setups = await getTopDownSetups();
             
             if (setups.length > 0) {
                 let outMsg = `🚀 *10-FACTOR SUPER SNIPER ALERT* 🚀\n_Top 5 Best Market Setups_ \n\n`;
                 setups.forEach((s, i) => {
-                    outMsg += `*${i + 1}. #${s.coin}* - ${s.type} (Score: ${s.score})\n   🔥 ADX Trend: ${s.adx}\n   ✔️ Confirmations: ${s.reasons}\n   🤖 AI Check: ${config.PREFIX}future ${s.coin} 15m\n\n`;
+                    outMsg += `*${i + 1}. #${s.coin}* - ${s.type} (Score: ${s.score})\n   📍 Price: $${s.price}\n   🔥 ADX Trend: ${s.adx}\n   ✔️ Reasons: ${s.reasons}\n   ⏳ *Recommended:* 15m (Scalp)\n   🤖 AI Check: ${config.PREFIX}future ${s.coin} 15m\n\n`;
                 });
-                await conn.sendMessage(ownerJid, { text: outMsg.trim() });
+                await conn.sendMessage(targetChat, { text: outMsg.trim() });
             }
         } catch (error) { }
     }, 5 * 60 * 1000);
-}
+});
+
+cmd({
+    pattern: "scanstop",
+    desc: "Stop Auto Scanner & Trade Manager",
+    category: "owner",
+    isOwner: true,
+    react: "🛑",
+    filename: __filename
+},
+async (conn, mek, m, { reply }) => {
+    if (!activeScannerLoop && !activeTradeManager) {
+        return await reply("⚠️ Scanner එක දැනටමත් නවතා ඇත.");
+    }
+    
+    if (activeScannerLoop) clearInterval(activeScannerLoop);
+    if (activeTradeManager) clearInterval(activeTradeManager);
+    
+    activeScannerLoop = null;
+    activeTradeManager = null;
+    
+    await reply("🛑 Auto Scanner සහ Trade Manager සාර්ථකව නවත්වන ලදී.");
+});
 
 // 🎯 3. MANUAL COMMAND (.superscan)
 cmd({
@@ -182,12 +211,6 @@ cmd({
 },
 async (conn, mek, m, { reply }) => {
     try {
-        // ✅ AUTO-START TRIGGER
-        // ඔයා .superscan කියල ගහපු ගමන් මේකෙන් Auto Engine එක තනියම On වෙනවා!
-        if (!isEngineRunning) {
-            startBackgroundEngine(conn);
-        }
-
         await m.react('⏳');
         await reply(`🚀 *10-Factor Super Scanner ක්‍රියාත්මක වේ...*\n(Top 30 Trending Coins පරීක්ෂා කර හොඳම 5 තෝරාගනිමින් පවතී...)`);
         
@@ -199,12 +222,10 @@ async (conn, mek, m, { reply }) => {
 
         let outMsg = `╔═══════════════════════════╗\n║ 🎯 *TOP 5 SNIPER SETUPS* ║\n╚═══════════════════════════╝\n\n`;
         setups.forEach((s, i) => {
-            outMsg += `*${i + 1}. #${s.coin}* - ${s.type} (Score: ${s.score} ⭐)\n   📍 Price: $${s.price}\n   🔥 ADX Trend: ${s.adx}\n   ✔️ Confirmations: ${s.reasons}\n   🤖 AI Check: ${config.PREFIX}future ${s.coin} 15m\n\n`;
+            outMsg += `*${i + 1}. #${s.coin}* - ${s.type} (Score: ${s.score} ⭐)\n   📍 Price: $${s.price}\n   🔥 ADX Trend: ${s.adx}\n   ✔️ Reasons: ${s.reasons}\n   ⏳ *Recommended:* 15m (Scalp)\n   🤖 AI Check: ${config.PREFIX}future ${s.coin} 15m\n\n`;
         });
         
         await reply(outMsg.trim());
         await m.react('✅');
     } catch (e) { await reply('❌ Error: ' + e.message); }
 });
-
-module.exports = { startBackgroundEngine };

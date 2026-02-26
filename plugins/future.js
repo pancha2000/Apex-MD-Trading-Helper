@@ -9,7 +9,7 @@ const smc = require('../lib/smartmoney');
 cmd({
     pattern: "future",
     alias: ["futures"],
-    desc: "Ultimate Futures AI - 12 Factor Smart Entry",
+    desc: "Ultimate Futures AI - Smart Entry + MTF + RRR Filter",
     category: "crypto",
     react: "🔴",
     filename: __filename
@@ -23,6 +23,11 @@ async (conn, mek, m, { reply, args }) => {
         if (!coin.endsWith('USDT')) coin += 'USDT';
         let timeframe = args[1] ? args[1].toLowerCase() : '15m';
 
+        // ✅ Trade Type තීරණය කිරීම (Scalp/Intraday/Swing)
+        let tradeCategory = "⚡ Scalp Trade";
+        if (timeframe === '30m' || timeframe === '1h' || timeframe === '4h') tradeCategory = "🌅 Intraday Trade";
+        if (timeframe === '1d' || timeframe === '1w') tradeCategory = "📅 Swing Trade";
+
         await m.react('⏳');
         await reply(`⏳ *${coin} Full 12-Factor Analysis...*\n(MTF + Divergence + Volume Spikes + Smart Entry)`);
 
@@ -33,7 +38,9 @@ async (conn, mek, m, { reply, args }) => {
         const candles4H      = await binance.getKlineData(coin, '4h', 60);
         const liqData        = await binance.getLiquidationData(coin);
         const currentPrice   = parseFloat(currentCandles[currentCandles.length - 1][4]);
-        const priceStr       = currentPrice.toFixed(2);
+        
+        // ✅ FIX: දශම 4කට හැදීම
+        const priceStr       = currentPrice.toFixed(4);
 
         // ── Indicators ─────────────────────────────────────
         const ema200 = parseFloat(indicators.calculateEMA(currentCandles, 200));
@@ -83,33 +90,36 @@ async (conn, mek, m, { reply, args }) => {
             const zoneSL = parseFloat(bestEntry.sl);
             const atrSL  = entryPrice - atrVal * 1.5;
             smartSL = (entryPrice - zoneSL) < atrVal * 3 ? zoneSL : atrSL;
-            tp1 = (entryPrice + atrVal * 2.5).toFixed(2);   
-            tp2 = (entryPrice + atrVal * 4.0).toFixed(2);   
+            tp1 = (entryPrice + atrVal * 2.5);   
+            tp2 = (entryPrice + atrVal * 4.0);   
         } else {
             const zoneSL = parseFloat(bestEntry.sl);
             const atrSL  = entryPrice + atrVal * 1.5;
             smartSL = (zoneSL - entryPrice) < atrVal * 3 ? zoneSL : atrSL;
-            tp1 = (entryPrice - atrVal * 2.5).toFixed(2);
-            tp2 = (entryPrice - atrVal * 4.0).toFixed(2);
+            tp1 = (entryPrice - atrVal * 2.5);
+            tp2 = (entryPrice - atrVal * 4.0);
         }
 
-        const entryStr = entryPrice.toFixed(2);
-        const slStr    = parseFloat(smartSL).toFixed(2);
+        // ✅ FIX: දශම 4කට හැදීම
+        const entryStr = entryPrice.toFixed(4);
+        const slStr    = parseFloat(smartSL).toFixed(4);
+        const tp1Str   = parseFloat(tp1).toFixed(4);
+        const tp2Str   = parseFloat(tp2).toFixed(4);
         
         const riskAmount = Math.abs(entryPrice - parseFloat(slStr));
-        const rrrVal   = riskAmount > 0 ? (Math.abs(parseFloat(tp2) - entryPrice) / riskAmount) : 0;
+        const rrrVal   = riskAmount > 0 ? (Math.abs(parseFloat(tp2Str) - entryPrice) / riskAmount) : 0;
         const rrrStr   = rrrVal.toFixed(2);
 
         // ── Feature 2: RRR Pre-Filter ────────────────────
         const settings = await db.getSettings();
-        const rrrCheck = indicators.checkRRR(entryStr, tp2, slStr, settings.minRRR || 1.5);
+        const rrrCheck = indicators.checkRRR(entryStr, tp2Str, slStr, settings.minRRR || 1.5);
 
         if (!rrrCheck.pass && settings.strictMode) {
             return await reply(
 `⛔ *TRADE REJECTED - RRR Filter*
 
 🪙 ${coin} | ${direction}
-📍 Entry: $${entryStr} | TP: $${tp2} | SL: $${slStr}
+📍 Entry: $${entryStr} | TP: $${tp2Str} | SL: $${slStr}
 
 ${rrrCheck.reason}
 
@@ -203,13 +213,13 @@ Entry Zone: ${bestEntry.name} | Order: ${orderSuggestion.type}
 Confirmation: ${confirmation.status}
 
 STRICT MATH (use exactly):
-direction: "${direction}", entry: "${entryStr}", tp1: "${tp1}", tp2: "${tp2}", sl: "${slStr}"
+direction: "${direction}", entry: "${entryStr}", tp1: "${tp1Str}", tp2: "${tp2Str}", sl: "${slStr}"
 rrr: "1:${rrrStr}", leverage: "${levText}", margin: "${marginText}", risk: "${riskText}"
 
 Output full signal with insights. Sinhala explanations. English for technical terms.
 
 JSON only:
-{"direction":"${direction} or WAIT","emoji":"🟢 or 🔴 or ⚪","entry":"${entryStr}","tp1":"${tp1}","tp2":"${tp2}","sl":"${slStr}","rrr":"1:${rrrStr}","leverage":"${levText}","margin":"${marginText}","risk":"${riskText}","confidence":"XX%","trend":"sinhala","smc_summary":"sinhala"}`;
+{"direction":"${direction} or WAIT","emoji":"🟢 or 🔴 or ⚪","entry":"${entryStr}","tp1":"${tp1Str}","tp2":"${tp2Str}","sl":"${slStr}","rrr":"1:${rrrStr}","leverage":"${levText}","margin":"${marginText}","risk":"${riskText}","confidence":"XX%","trend":"sinhala","smc_summary":"sinhala"}`;
 
         const aiRes = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
             model: "llama-3.3-70b-versatile",
@@ -224,7 +234,7 @@ JSON only:
         const zoneWarn = bestEntry.warning ? `\n\n${bestEntry.warning}` : "";
         const rrrWarnMsg = !rrrCheck.pass ? `\n\n⚠️ *RRR WARNING:* ${rrrCheck.reason}` : "";
         const trackMsg = data.direction !== "WAIT"
-            ? `\n📌 Track: .track reply\n[TARGETS|ENTRY:${entryStr}|TP:${tp2}|SL:${slStr}]` : "";
+            ? `\n📌 Track: .track reply\n[TARGETS|ENTRY:${data.entry}|TP:${data.tp2}|SL:${data.sl}]` : "";
 
         const out = `
 ╔═══════════════════════════╗
@@ -232,6 +242,7 @@ JSON only:
 ╚═══════════════════════════╝
 
 🪙 ${coin.replace('USDT','')} / USDT  💵 $${priceStr}
+📌 *Trade Style:* ${tradeCategory}
 ⭐ *Score: ${finalScore}/${maxScore}* ✔️ ${finalReasons}
 📊 *ADX Trend:* ${adxData.status}
 ⏱️ ${marketSMC.killzone}${asianWarning}
@@ -241,7 +252,7 @@ ${mtf5m.status}
 
 *🎯 Smart Entry* ${data.emoji} ${data.direction}
 🏹 Zone: ${bestEntry.name}
-   $${parseFloat(bestEntry.zoneBottom||0).toFixed(2)} ➜ $${parseFloat(bestEntry.zoneTop||0).toFixed(2)}
+   $${parseFloat(bestEntry.zoneBottom||0).toFixed(4)} ➜ $${parseFloat(bestEntry.zoneTop||0).toFixed(4)}
 📍 Entry: $${data.entry}
 📋 Order: ${orderSuggestion.type}
    ${orderSuggestion.reason}
@@ -262,7 +273,8 @@ RRR: ${data.rrr} ${rrrCheck.pass ? '✅' : '⚠️'}
 *💡 Analysis:*
 ${data.trend}
 ${data.smc_summary}${zoneWarn}${rrrWarnMsg}
-🖼️ Chart: .chart ${coin} 15m
+
+🖼️ Chart: .chart ${coin} ${timeframe}
 ⚡ _.margin_ ලෙ capital set කරන්න.${trackMsg}`;
 
         await reply(out.trim());
