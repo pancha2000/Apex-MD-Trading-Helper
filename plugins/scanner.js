@@ -1,9 +1,9 @@
-const { cmd } = require('./commands'); 
+const { cmd } = require('../lib/commands'); 
 const config = require('../config');
-const binance = require('./binance');
-const indicators = require('./indicators');
-const smc = require('./smartmoney');
-const db = require('./database');
+const binance = require('../lib/binance');
+const indicators = require('../lib/indicators');
+const smc = require('../lib/smartmoney');
+const db = require('../lib/database');
 const axios = require('axios');
 
 // 🧠 1. SUPER SCANNER: 10-Factor Scoring System (Realistic Tuning)
@@ -22,9 +22,8 @@ async function getTopDownSetups() {
 
             const currentPrice = parseFloat(candles15m[candles15m.length - 1][4]);
 
-            // 🛑 ADX Trend Filter (Trend එකක් අනිවාර්යයි)
+            // 🛑 ADX Trend Filter (HARD BLOCK එක අයින් කළා!)
             const adxData = indicators.calculateADX(candles15m.slice(-50));
-            if (!adxData.isStrong) continue; 
 
             // ── Indicators ──
             const ema50_4h = parseFloat(indicators.calculateEMA(candles4h, 50));
@@ -66,27 +65,29 @@ async function getTopDownSetups() {
             if (pattern.includes('🟢')) { longScore++; longReasons.push(`Pattern`); }
             if (pattern.includes('🔴')) { shortScore++; shortReasons.push(`Pattern`); }
             // 7. Volume Breakout
-            if (volBreak.includes('Bullish')) { longScore++; longReasons.push("Vol Spike 🚀"); }
-            if (volBreak.includes('Bearish')) { shortScore++; shortReasons.push("Vol Spike 🩸"); }
+            if (volBreak.includes('Bullish')) { longScore++; longReasons.push("Vol Spike"); }
+            if (volBreak.includes('Bearish')) { shortScore++; shortReasons.push("Vol Spike"); }
             // 8. Divergence
-            if (divergence.includes('Bullish')) { longScore++; longReasons.push("Divergence 🎯"); }
-            if (divergence.includes('Bearish')) { shortScore++; shortReasons.push("Divergence 🎯"); }
+            if (divergence.includes('Bullish')) { longScore++; longReasons.push("Divergence"); }
+            if (divergence.includes('Bearish')) { shortScore++; shortReasons.push("Divergence"); }
             // 9. MACD
-            if (macd.includes('Bullish')) { longScore++; longReasons.push("MACD Bull 📊"); }
-            if (macd.includes('Bearish')) { shortScore++; shortReasons.push("MACD Bear 📊"); }
+            if (macd.includes('Bullish')) { longScore++; longReasons.push("MACD Bull"); }
+            if (macd.includes('Bearish')) { shortScore++; shortReasons.push("MACD Bear"); }
             // 10. ChoCH / Sweep
-            if (marketSMC.sweep.includes('Bullish') || marketSMC.choch.includes('Bullish')) { longScore++; longReasons.push("Liq. Sweep 🐋"); }
-            if (marketSMC.sweep.includes('Bearish') || marketSMC.choch.includes('Bearish')) { shortScore++; shortReasons.push("Liq. Sweep 🐋"); }
+            if (marketSMC.sweep.includes('Bullish') || marketSMC.choch.includes('Bullish')) { longScore++; longReasons.push("Sweep/ChoCH"); }
+            if (marketSMC.sweep.includes('Bearish') || marketSMC.choch.includes('Bearish')) { shortScore++; shortReasons.push("Sweep/ChoCH"); }
 
-            // 🏆 ලකුණු 10න් 5ක් (5/10) හෝ ඊට වැඩි නම් පමණක් ලබා ගනී! (High Probability Setups)
-            if (longScore >= 5) {
+            // 🏆 ලකුණු 10න් 4ක් හෝ ඊට වැඩි නම් ලබා ගනී (ප්‍රායෝගික මට්ටම)
+            if (longScore >= 4) {
                 foundSetups.push({ coin: coin.replace('USDT', ''), type: 'LONG 🟢', score: `${longScore}/10`, price: currentPrice.toFixed(2), adx: adxData.value, entryPoint: ema50_15m.toFixed(2), reasons: longReasons.join(', ') });
             }
-            if (shortScore >= 5) {
+            if (shortScore >= 4) {
                 foundSetups.push({ coin: coin.replace('USDT', ''), type: 'SHORT 🔴', score: `${shortScore}/10`, price: currentPrice.toFixed(2), adx: adxData.value, entryPoint: ema50_15m.toFixed(2), reasons: shortReasons.join(', ') });
             }
 
-        } catch (err) { /* Skip errors */ }
+        } catch (err) { 
+            console.log(`Error scanning ${coin}:`, err.message); 
+        }
     }
     return foundSetups;
 }
@@ -96,8 +97,9 @@ function startScanner(conn) {
     console.log('🚀 Super Scanner Engine Started...');
     let botNumber = conn.user.id.split(':')[0] + '@s.whatsapp.net'; 
 
+    // 🟢 බොට් ඔන් වුණු ගමන් එන මැසේජ් එක
     conn.sendMessage(botNumber, { 
-        text: `✅ *SUPER SCANNER ACTIVATED!* 🚀\n\n10-Factor Auto Scanner සාර්ථකව ක්‍රියාත්මක විය.\n\n_බොට් දැන් සෑම විනාඩි 5කට වරක්ම Top 30 Coins පරීක්ෂා කරයි. ලකුණු 5/10 ට වැඩි (A+ Quality) Trade එකක් ආවොත් පමණක් ඔබට Alert එකක් එවනු ඇත._ 🛡️`
+        text: `✅ *SUPER SCANNER ACTIVATED!* 🚀\n\n10-Factor Auto Scanner සාර්ථකව ක්‍රියාත්මක විය.\n\n_බොට් දැන් සෑම විනාඩි 5කට වරක්ම Top 30 Coins පරීක්ෂා කරයි. ලකුණු 4/10 ට වැඩි Trade එකක් ආවොත් පමණක් ඔබට Alert එකක් එවනු ඇත._ 🛡️\n\n(ස්කෑනරය වැඩදැයි අතින් පරීක්ෂා කිරීමට *.superscan* භාවිතා කරන්න)`
     }).catch(err => console.log("Startup Alert Error:", err.message));
 
     // ─── TASK 1: ACTIVE TRADE MANAGER ───
@@ -163,9 +165,9 @@ function startScanner(conn) {
             let setups = await getTopDownSetups();
             
             if (setups.length > 0) {
-                let outMsg = `🚀 *10-FACTOR SUPER SNIPER ALERT* 🚀\n_Top Market Setups (Score 5/10+)_ \n\n`;
+                let outMsg = `🚀 *10-FACTOR SUPER SNIPER ALERT* 🚀\n_Top Market Setups (Score 4/10+)_ \n\n`;
                 setups.forEach((s, i) => {
-                    outMsg += `*${i + 1}. #${s.coin}* - ${s.type} (Score: ${s.score})\n   🔥 ADX Trend: ${s.adx} (Strong)\n   ✔️ Confirmations: ${s.reasons}\n   🤖 AI Check: ${config.PREFIX}future ${s.coin} 15m\n\n`;
+                    outMsg += `*${i + 1}. #${s.coin}* - ${s.type} (Score: ${s.score})\n   🔥 ADX Trend: ${s.adx}\n   ✔️ Confirmations: ${s.reasons}\n   🤖 AI Check: ${config.PREFIX}future ${s.coin} 15m\n\n`;
                 });
                 await conn.sendMessage(botNumber, { text: outMsg.trim() });
             }
@@ -190,7 +192,7 @@ async (conn, mek, m, { reply }) => {
         let setups = await getTopDownSetups();
         
         if (setups.length === 0) {
-            return await reply(`╔═══════════════════════════╗\n║ 🔍 *SUPER SCAN RESULTS* ║\n╚═══════════════════════════╝\n\nමෙම මොහොතේ ලකුණු 5/10 ට වඩා ලබාගත් ෂුවර් Setups කිසිවක් මාකට් එකේ Top Coins 30 තුළ නොමැත. ⚪`);
+            return await reply(`╔═══════════════════════════╗\n║ 🔍 *SUPER SCAN RESULTS* ║\n╚═══════════════════════════╝\n\nමෙම මොහොතේ ලකුණු 4/10 ට වඩා ලබාගත් ෂුවර් Setups කිසිවක් මාකට් එකේ Top Coins 30 තුළ නොමැත. ⚪`);
         }
 
         let outMsg = `╔═══════════════════════════╗\n║ 🎯 *10-FACTOR SNIPER SETUPS* ║\n╚═══════════════════════════╝\n\n`;
