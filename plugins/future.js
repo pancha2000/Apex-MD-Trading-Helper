@@ -41,6 +41,7 @@ async (conn, mek, m, { reply, args }) => {
         const priceStr       = currentPrice.toFixed(4);
 
         const ema200 = parseFloat(indicators.calculateEMA(currentCandles, 200));
+        const ema50  = parseFloat(indicators.calculateEMA(currentCandles.slice(-100), 50)); 
         const ema1H   = parseFloat(indicators.calculateEMA(candles1H, 50));
         const ema4H   = parseFloat(indicators.calculateEMA(candles4H, 50));
         const trend1H = parseFloat(candles1H[candles1H.length-1][4]) > ema1H ? "Bullish 🟢" : "Bearish 🔴";
