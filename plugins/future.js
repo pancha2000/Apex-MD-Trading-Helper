@@ -99,6 +99,9 @@ StochRSI: ${aData.stochRSI.signal} (K:${aData.stochRSI.k}) | BB: ${aData.bbands.
 Smart SL Method: ${aData.slLabel} | TP Methods: ${aData.tp1Label}, ${aData.tp2Label}, ${aData.tp3Label}
 MTF RSI: ${aData.mtfRSI.signal} | Volume Node: ${aData.volNodes.nearHVN ? 'At HVN (good entry)' : 'Not at HVN'} 
 Session: ${aData.session.quality} (${aData.session.session}) | Candle Close: ${aData.candleConf.confirmed ? 'CONFIRMED' : 'Pending'}
+Liquidity Sweep: ${aData.liquiditySweep} | ChoCH: ${aData.choch}
+Short-Term OBs: Bull=${ aData.mtfOBsExtra.bullish ? aData.mtfOBsExtra.bullish.bottom+'-'+aData.mtfOBsExtra.bullish.top : 'None'} | Bear=${aData.mtfOBsExtra.bearish ? aData.mtfOBsExtra.bearish.bottom+'-'+aData.mtfOBsExtra.bearish.top : 'None'}
+Entry Validation: ${aData.entryValidation.warning || 'Entry OK ✅'}
 Funding Rate: ${fundingRate} | Whale Buy Wall: $${whaleWalls.supportWall} | Sell: $${whaleWalls.resistWall}
 
 === SENTIMENT LAYER (USE THIS TO CONFIRM/REJECT) ===
@@ -123,6 +126,9 @@ Put/Call Ratio: ${entryConf.pcr.signal} | Netflow: ${entryConf.netflow.signal}
 4. Funding <-0.1% + SHORT = caution (shorts getting squeezed)
 5. F&G >80 (Extreme Greed) + LONG = risky, mention
 6. F&G <20 (Extreme Fear) + SHORT = risky, mention
+7. Liquidity Sweep CONFIRMS direction = strong signal (smart money move)
+8. ChoCH present = trend reversal confirmed, high confidence
+9. If entryValidation has WARNING = reduce confidence, mention in trend field
 
 STRICT MATH (keep exactly): entry:"${aData.entryPrice}", tp1:"${aData.tp1}", tp2:"${aData.tp2}", sl:"${aData.sl}", rrr:"1:${rrrStr}"
 
@@ -198,7 +204,7 @@ ${aData.mtf5m.status}
 📈 MTF RSI: ${aData.mtfRSI.display}
 🕒 Session: ${aData.session.display}
 📦 Volume: ${aData.volNodes.display}
-🕯️ Candle: ${aData.candleConf.display}${aData.mtfOB.confluenceZone ? '\n🔥 *MTF OB:* ' + aData.mtfOB.confluenceZone.display : ''}
+🕯️ Candle: ${aData.candleConf.display}${aData.mtfOB.confluenceZone ? '\n🔥 *MTF OB:* ' + aData.mtfOB.confluenceZone.display : ''}${aData.liquiditySweep !== 'None' ? '\n💧 *Liq Sweep:* ' + aData.liquiditySweep : ''}${aData.choch !== 'None' ? '\n🔄 *ChoCH:* ' + aData.choch : ''}${aData.entryValidation && aData.entryValidation.warning ? '\n' + aData.entryValidation.warning : ''}
 
 *🎯 Smart Entry* ${data.emoji} ${data.direction}
 🏹 Zone: ${aData.bestEntry.name}
