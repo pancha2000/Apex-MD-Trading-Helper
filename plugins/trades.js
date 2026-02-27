@@ -31,10 +31,17 @@ cmd({
                 const tradeType = t.direction || (t.tp > t.entry ? 'LONG' : 'SHORT');
                 const dirEmoji = tradeType === 'LONG' ? '🟢' : '🔴';
                 const statusEmoji = t.status === 'pending' ? '⏳' : '🟢';
-                msg += `*${i+1}. ${t.coin}* (${t.type.toUpperCase()} | ${dirEmoji} ${tradeType}) ${statusEmoji}\\n`;
-                msg += `🎯 Entry: $${t.entry}\\n💰 TP: $${t.tp}\\n🛑 SL: $${t.sl}\\n`;
-                if (t.rrr && t.rrr !== 'N/A') msg += `⚖️ RRR: ${t.rrr}\\n`;
-                msg += `🆔 ID: ${t._id}\\n\\n`;
+                msg += `*${i+1}. ${t.coin}* (${t.type.toUpperCase()} | ${dirEmoji} ${tradeType}) ${statusEmoji}
+`;
+                msg += `🎯 Entry: $${t.entry}
+💰 TP: $${t.tp}
+🛑 SL: $${t.sl}
+`;
+                if (t.rrr && t.rrr !== 'N/A') msg += `⚖️ RRR: ${t.rrr}
+`;
+                msg += `🆔 ID: ${t._id}
+
+`;
             });
             // ✅ FIX 6: Paper trades section
             if (paperTrades && paperTrades.length > 0) {
