@@ -4,7 +4,7 @@ const axios = require('axios');
 const db = require('../lib/database');
 const binance = require('../lib/binance');
 const analyzer = require('../lib/analyzer'); // ✅ අලුත් මොළය සම්බන්ධ කළා
-const confirmations = require('../lib/confirmations');
+const confirmations = require('../lib/confirmations_lib.js');
 const { checkRRR } = require('../lib/indicators');
 
 cmd({

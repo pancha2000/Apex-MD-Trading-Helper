@@ -5,7 +5,7 @@ const db = require('../lib/database');
 const binance = require('../lib/binance');
 const analyzer = require('../lib/analyzer'); // ✅ අලුත් මොළය සම්බන්ධ කළා
 const { checkRRR } = require('../lib/indicators');
-const confirmations = require('../lib/confirmations');
+const confirmations = require('../lib/confirmations_lib.js');
 
 cmd({
     pattern: "future",
