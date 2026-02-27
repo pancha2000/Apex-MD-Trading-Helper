@@ -3,7 +3,7 @@ const config = require('../config');
 const binance = require('../lib/binance');
 const indicators = require('../lib/indicators');
 // ✅ NEW precision indicators for backtest
-const { calculateStochRSI, calculateBollingerBands, checkMTFRSIConfluence, detectVolumeNodes } = require('../lib/indicators');
+const { calculateStochRSI, calculateBollingerBands, checkMTFRSIConfluence, detectVolumeNodes, detectMTFOBs } = require('../lib/indicators');
 const smc = require('../lib/smartmoney');
 const axios = require('axios');
 
@@ -65,7 +65,10 @@ async (conn, mek, m, { reply, args }) => {
             let stochRSI = calculateStochRSI(slice.slice(-60));
             let bbands   = calculateBollingerBands(slice.slice(-30));
             let mtfRSI   = checkMTFRSIConfluence(slice.slice(-50), slice.slice(-50)); // approximate
-            let volNodes = detectVolumeNodes(slice.slice(-50));
+            let volNodes          = detectVolumeNodes(slice.slice(-50));
+            let liquiditySweep   = smc.checkLiquiditySweep ? smc.checkLiquiditySweep(slice.slice(-15)) : 'None';
+            let choch            = smc.checkChoCH ? smc.checkChoCH(slice.slice(-20)) : 'None';
+            let mtfOBsExtra      = detectMTFOBs(slice.slice(-15));
 
             let longScore = 0, shortScore = 0;
 
@@ -109,13 +112,25 @@ async (conn, mek, m, { reply, args }) => {
             if (mtfRSI.isBear && mtfRSI.signal !== 'STRONG_BEAR') shortScore++;
             if (volNodes.nearHVN) { longScore += 0.5; shortScore += 0.5; }
 
+            // ✅ NEW: Liquidity Sweep (+2 weight - strong ICT signal)
+            if (liquiditySweep.includes('Bullish')) longScore += 2;
+            if (liquiditySweep.includes('Bearish')) shortScore += 2;
+
+            // ✅ NEW: ChoCH (+2 weight - reversal confirmed)
+            if (choch.includes('Bullish')) longScore += 2;
+            if (choch.includes('Bearish')) shortScore += 2;
+
+            // ✅ NEW: Short-term OBs (+1)
+            if (mtfOBsExtra.bullish) longScore++;
+            if (mtfOBsExtra.bearish) shortScore++;
+
             let tradeTaken = false;
             let isLong = false;
 
             // ✅ UPGRADED: Strict Mode - ලකුණු 6 ක් වත් ඕනේ වගේම ADX එක 20 ට වඩා වැඩි වෙන්නත් ඕනේ
             if (adxData.value > 20 || adxData.isStrong) {
-                if (longScore >= 6) { tradeTaken = true; isLong = true; longTrades++; }
-                else if (shortScore >= 6) { tradeTaken = true; isLong = false; shortTrades++; }
+                if (longScore >= 8) { tradeTaken = true; isLong = true; longTrades++; }
+                else if (shortScore >= 8) { tradeTaken = true; isLong = false; shortTrades++; }
             }
 
             if (tradeTaken) {
@@ -167,9 +182,11 @@ async (conn, mek, m, { reply, args }) => {
 ▫️ SMC (OB, Sweeps, ChoCH)
 ▫️ Harmonic Patterns & ICT Silver Bullet
 ▫️ Stochastic RSI + Bollinger Bands
-▫️ MTF RSI Confluence + Volume Nodes (NEW 🔥)
+▫️ MTF RSI Confluence + Volume Nodes
+▫️ Liquidity Sweep + ChoCH (ICT) 🔥 NEW
+▫️ Short-Term Order Blocks 🔥 NEW
 ▫️ *NOTE: Live Sentiment + MTF OB Confluence adds in real signals*
-▫️ Run *.future ${coin.replace('USDT','')}* for full 21-factor live signal
+▫️ Run *.future ${coin.replace('USDT','')}* for full 26-factor live signal
 
 *🎯 Performance Results:*
 ▫️ Total Trades: ${totalTrades} (Long: ${longTrades} | Short: ${shortTrades})

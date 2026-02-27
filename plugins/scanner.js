@@ -31,7 +31,7 @@ async function getTopDownSetups() {
             await new Promise(resolve => setTimeout(resolve, 200));
             const aData = await analyzer.run14FactorAnalysis(coin, '15m');
 
-            if (aData.score >= 5) {
+            if (aData.score >= 7) {
                 const sent = await getSentimentCached();
                 const sentBias = parseFloat(sent.totalBias) || 0;
                 const sentBonus =
@@ -45,13 +45,15 @@ async function getTopDownSetups() {
                     coin: coin.replace('USDT', ''),
                     type: aData.direction === 'LONG' ? 'LONG 🟢' : 'SHORT 🔴',
                     rawScore: adjustedScore,
-                    score: `${adjustedScore}/15`,
+                    score: `${adjustedScore}/26`,
                     price: aData.priceStr,
                     tp1: aData.tp1,
                     tp: aData.tp2,
                     sl: aData.sl,
                     adx: aData.adxData.value,
                     reasons: aData.reasons,
+                    liquiditySweep: aData.liquiditySweep || 'None',
+                    choch: aData.choch || 'None',
                     sentEmoji: sentBonus > 0 ? '📰✅' : sentBonus < 0 ? '📰⚠️' : ''
                 });
             }
@@ -203,7 +205,9 @@ async (conn, mek, m, { reply }) => {
         outMsg += `🧠 *Market Sentiment:* ${sent.overallSentiment}\n`;
         outMsg += `${sent.fngEmoji} F&G: ${sent.fngValue} | ₿ BTC.D: ${sent.btcDominance}% | 📰 ${sent.newsSentimentScore > 0 ? '+' : ''}${sent.newsSentimentScore}\n\n`;
         setups.forEach((s, i) => {
-            outMsg += `*${i + 1}. #${s.coin}* - ${s.type} (Score: ${s.score} ⭐) ${s.sentEmoji || ''}\n   📍 Price: $${s.price}\n   🔥 ADX: ${s.adx}\n   ✔️ Reasons: ${s.reasons}\n   🤖 AI Check: ${config.PREFIX}future ${s.coin} 15m\n\n`;
+            const mSweep = s.liquiditySweep !== 'None' ? `\n   💧 ${s.liquiditySweep}` : '';
+        const mChoch = s.choch !== 'None' ? `\n   🔄 ${s.choch}` : '';
+        outMsg += `*${i + 1}. #${s.coin}* - ${s.type} (Score: ${s.score} ⭐) ${s.sentEmoji || ''}\n   📍 Price: $${s.price}\n   🔥 ADX: ${s.adx}\n   ✔️ Reasons: ${s.reasons}${mSweep}${mChoch}\n   🤖 AI Check: ${config.PREFIX}future ${s.coin} 15m\n\n`;
         });
         outMsg += `${scanStatus}`;
 
