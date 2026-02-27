@@ -3,8 +3,8 @@ const config = require('../config');
 const axios = require('axios');
 const db = require('../lib/database');
 const binance = require('../lib/binance');
-const indicators = require('../lib/indicators');
-const smc = require('../lib/smartmoney');
+const analyzer = require('../lib/analyzer'); // ✅ අලුත් මොළය සම්බන්ධ කළා
+const { checkRRR } = require('../lib/indicators');
 
 cmd({
         pattern: "spot",
@@ -22,7 +22,7 @@ cmd({
             if (!coin.endsWith('USDT')) coin += 'USDT';
             let timeframe = args[1] ? args[1].toLowerCase() : '1d';
             
-            // ✅ Trade Type තීරණය කිරීම (Scalp/Intraday/Swing)
+            // ✅ Trade Type තීරණය කිරීම
             let tradeCategory = "⚡ Scalp Trade";
             if (timeframe === '30m' || timeframe === '1h' || timeframe === '4h') tradeCategory = "🌅 Intraday Trade";
             if (timeframe === '1d' || timeframe === '1w') tradeCategory = "📅 Swing Trade";
@@ -30,109 +30,63 @@ cmd({
             await m.react('⏳');
             await reply(`⏳ *${coin} Smart Spot Analysis...*`);
             
-            // ── Data Fetch ─────────────────────────────────────
-            const currentCandles = await binance.getKlineData(coin, timeframe, 100);
-            const candles4h = await binance.getKlineData(coin, '4h', 60);
-            const candles1h = await binance.getKlineData(coin, '1h', 50);
+            // 🧠 1. Analyzer එකෙන් Data ගැනීම (කලින් පේළි ගාණක වැඩේ දැන් එක පේළියයි!)
+            const aData = await analyzer.run14FactorAnalysis(coin, timeframe);
             const fng = await binance.getFearAndGreed();
-            const currentPrice = parseFloat(currentCandles[currentCandles.length - 1][4]);
             
-            // ✅ FIX: දශම 4කට හැදීම
-            const priceStr = currentPrice.toFixed(4);
+            // 🎯 2. Custom Spot TPs (Fibonacci & Resistance මත පදනම්ව)
+            const tp1 = parseFloat(aData.marketSMC.resistance).toFixed(4);
+            const tp2 = parseFloat(aData.marketSMC.ext1618).toFixed(4);
+            const tp3 = parseFloat(aData.marketSMC.ext2618).toFixed(4);
             
-            // ── Indicators ─────────────────────────────────────
-            const rsi = indicators.calculateRSI(currentCandles.slice(-50), 14);
-            const atr = indicators.calculateATR(currentCandles.slice(-20));
-            const macd = indicators.calculateMACD(currentCandles.slice(-50));
-            const vwap = indicators.calculateVWAP(currentCandles);
-            const poc = indicators.calculatePOC(currentCandles.slice(-50));
-            const breakout = indicators.checkVolumeBreakout(currentCandles.slice(-50));
-            const divergence = indicators.checkDivergence(currentCandles.slice(-50));
-            const pattern = indicators.checkCandlePattern(currentCandles.slice(-5));
+            const entryPrice = parseFloat(aData.entryPrice);
+            const slPrice = parseFloat(aData.sl);
             
-            const marketSMC = smc.analyzeSMC(currentCandles.slice(-50));
-            const atrVal = parseFloat(atr);
-            
-            // ✅ Feature 1: 1H MTF Confirmation
-            const mtf1h = indicators.confirmEntry5m(candles1h, 'LONG');
-            
-            // ── Smart Entry ─────────────────────────────────────
-            const vwapMatch = vwap.match(/\$([0-9.]+)/);
-            const vwapPrice = vwapMatch ? parseFloat(vwapMatch[1]) : 0;
-            const bestEntry = smc.selectBestEntry(priceStr, marketSMC.bullishOB, marketSMC.fib618, poc, vwapPrice, 'LONG', atrVal);
-            const confirmation = smc.checkOBConfirmation(currentCandles.slice(-5), marketSMC.bullishOB, 'LONG');
-            const orderSugg = smc.getOrderTypeSuggestion(bestEntry.price, currentPrice, 'LONG');
-            
-            // ── Zone SL & TPs ───────────────────────────────────
-            const entryPrice = parseFloat(bestEntry.price);
-            const zoneSL = parseFloat(bestEntry.sl);
-            const atrSL = entryPrice - atrVal * 2.0;
-            const smartSL = (entryPrice - zoneSL) < atrVal * 4 ? zoneSL : atrSL;
-            
-            // ✅ FIX: දශම 4කට හැදීම
-            const entryStr = entryPrice.toFixed(4);
-            const slStr = parseFloat(smartSL).toFixed(4);
-            const tp1 = parseFloat(marketSMC.resistance).toFixed(4);
-            const tp2 = parseFloat(marketSMC.ext1618).toFixed(4);
-            const tp3 = parseFloat(marketSMC.ext2618).toFixed(4);
-            
-            const risk = Math.abs(entryPrice - parseFloat(slStr));
+            const risk = Math.abs(entryPrice - slPrice);
             const reward = Math.abs(parseFloat(tp2) - entryPrice);
             const rrrVal = risk > 0 ? reward / risk : 0;
             const rrrStr = rrrVal.toFixed(2);
             
-            // ✅ Feature 2: RRR Pre-Filter
             const settings = await db.getSettings();
-            const rrrCheck = indicators.checkRRR(entryStr, tp2, slStr, settings.minRRR || 1.5);
+            const rrrCheck = checkRRR(aData.entryPrice, tp2, aData.sl, settings.minRRR || 1.5);
             
             if (!rrrCheck.pass && settings.strictMode) {
-                return await reply(
-                    `⛔ *SPOT TRADE REJECTED - RRR Filter*
-
-🪙 ${coin} | BUY
-📍 Entry: $${entryStr} | TP: $${tp2} | SL: $${slStr}
-
-${rrrCheck.reason}
-💡 Better entry zone ලෙ wait කරන්න.`
-                );
+                return await reply(`⛔ *SPOT TRADE REJECTED - RRR Filter*\n\n🪙 ${coin} | BUY\n📍 Entry: $${aData.entryPrice} | TP: $${tp2} | SL: $${aData.sl}\n\n${rrrCheck.reason}\n💡 Better entry zone එකක් එනකල් wait කරන්න.`);
             }
             
-            // ── Risk Sizing ─────────────────────────────────────
+            // 💰 3. Risk Sizing for Spot (Leverage නැතිව)
             const userMargin = await db.getMargin(m.sender) || 0;
             let allocText = "Set .margin",
                 riskText = "Set .margin";
             if (userMargin > 0) {
-                const riskMon = userMargin * 0.02;
+                const riskMon = userMargin * 0.02; // 2% Capital Risk
                 const slPct = risk / entryPrice;
-                const posSize = riskMon / slPct;
-                allocText = posSize > userMargin ? `Max $${userMargin}` : `$${posSize.toFixed(2)}`;
+                const posSize = slPct > 0 ? riskMon / slPct : 0;
+                
+                allocText = posSize > userMargin ? `Max $${userMargin.toFixed(2)}` : `$${posSize.toFixed(2)}`;
                 riskText = `$${riskMon.toFixed(2)}`;
             }
             
-            const asianWarn = marketSMC.killzone.includes("Asian") ?
-                "\n⚠️ *ASIAN SESSION* - London Open ලෙ wait recommended." : "";
+            const asianWarn = aData.marketSMC.killzone.includes("Asian") ? "\n⚠️ *ASIAN SESSION* - London Open වෙනකල් wait recommended." : "";
             
-            const prompt = `Analyze ${coin} SPOT trading. Current: $${priceStr}
-
-1H MTF: ${mtf1h.status}
+            // 🤖 4. AI Prompt Generation
+            const prompt = `Analyze ${coin} SPOT trading. Current: $${aData.priceStr}
+1H MTF: ${aData.mtf5m.status}
 RRR: ${rrrCheck.reason}
-Session: ${marketSMC.killzone}
+Session: ${aData.marketSMC.killzone}
 
-DATA: RSI=${rsi} | VWAP=${vwap} | Volume=${breakout}
-Divergence=${divergence} | Pattern=${pattern} | F&G=${fng}
-OB Bull: ${marketSMC.bullishOBDisplay} | ChoCH: ${marketSMC.choch}
+DATA: RSI=${aData.rsi} | VWAP=${aData.vwap}
+OB Bull: ${aData.marketSMC.bullishOBDisplay} | ChoCH: ${aData.marketSMC.choch}
+Entry Zone: ${aData.bestEntry.name} | Order: ${aData.orderSuggestion.type}
+Confirmation: ${aData.confirmation.status}
 
-Entry Zone: ${bestEntry.name} | Order: ${orderSugg.type}
-Confirmation: ${confirmation.status}
-
-EXACT MATH:
-entry:"${entryStr}", tp1:"${tp1}", tp2:"${tp2}", tp3:"${tp3}", sl:"${slStr}", rrr:"1:${rrrStr}", allocation:"${allocText}", riskAmt:"${riskText}"
+EXACT MATH: entry:"${aData.entryPrice}", tp1:"${tp1}", tp2:"${tp2}", tp3:"${tp3}", sl:"${aData.sl}", rrr:"1:${rrrStr}", allocation:"${allocText}", riskAmt:"${riskText}"
 
 ${settings.strictMode ? 'Output WAIT if low confidence or bad setup.' : 'Output signal with warnings if needed.'}
 Sinhala explanation. Keep RSI/VWAP/OB in English.
 
 JSON only:
-{"direction":"BUY or WAIT","emoji":"🟢 or ⚪","entry":"${entryStr}","tp1":"${tp1}","tp2":"${tp2}","tp3":"${tp3}","sl":"${slStr}","rrr":"1:${rrrStr}","allocation":"${allocText}","riskAmt":"${riskText}","confidence":"XX%","trend":"sinhala","smc_summary":"sinhala"}`;
+{"direction":"BUY or WAIT","emoji":"🟢 or ⚪","entry":"${aData.entryPrice}","tp1":"${tp1}","tp2":"${tp2}","tp3":"${tp3}","sl":"${aData.sl}","rrr":"1:${rrrStr}","allocation":"${allocText}","riskAmt":"${riskText}","confidence":"XX%","trend":"sinhala","smc_summary":"sinhala"}`;
             
             const aiRes = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
                 model: "llama-3.3-70b-versatile",
@@ -141,33 +95,32 @@ JSON only:
             
             const raw = aiRes.data.choices[0].message.content.replace(/```(?:json)?\n?/g, '');
             const jm = raw.match(/\{[\s\S]*\}/);
-            if (!jm) throw new Error(`AI JSON error: ${raw.substring(0,150)}`);
+            if (!jm) throw new Error(`AI JSON error`);
             const data = JSON.parse(jm[0]);
             
-            const zoneWarn = bestEntry.warning ? `\n\n${bestEntry.warning}` : "";
+            const zoneWarn = aData.bestEntry.warning ? `\n\n${aData.bestEntry.warning}` : "";
             const rrrWarnMsg = !rrrCheck.pass ? `\n\n⚠️ *RRR WARNING:* ${rrrCheck.reason}` : "";
-            const trackMsg = data.direction !== "WAIT" ?
-                `\n📌 Track: .track reply\n[TARGETS|ENTRY:${data.entry}|TP:${data.tp2}|SL:${data.sl}]` : "";
+            const trackMsg = data.direction !== "WAIT" ? `\n📌 Track: .track reply\n[TARGETS|ENTRY:${data.entry}|TP:${data.tp2}|SL:${data.sl}]` : "";
             
+            // 🖨️ 5. Final Output Message
             const out = `
 ╔═══════════════════════════╗
 ║  🟢 *PRO SPOT ANALYSIS* ║
 ╚═══════════════════════════╝
 
-🪙 ${coin.replace('USDT','')} / USDT  💵 $${priceStr}
+🪙 ${coin.replace('USDT','')} / USDT  💵 $${aData.priceStr}
 📌 *Trade Style:* ${tradeCategory}
-⏱️ ${marketSMC.killzone}${asianWarn}
+⏱️ ${aData.marketSMC.killzone}${asianWarn}
 
 *🔬 1H MTF Confirmation:*
-${mtf1h.status}
+${aData.mtf5m.status}
 
 *🎯 Smart Entry* ${data.emoji} ${data.direction}
-🏹 Zone: ${bestEntry.name}
-   $${parseFloat(bestEntry.zoneBottom||0).toFixed(4)} ➜ $${parseFloat(bestEntry.zoneTop||0).toFixed(4)}
+🏹 Zone: ${aData.bestEntry.name}
 📍 Entry: $${data.entry}
-📋 Order: ${orderSugg.type}
-   ${orderSugg.reason}
-🔔 ${confirmation.status}
+📋 Order: ${aData.orderSuggestion.type}
+   ${aData.orderSuggestion.reason}
+🔔 ${aData.confirmation.status}
 
 🎯 *Take Profits:*
    ▪️ TP1 (Partial 50%): $${data.tp1}
@@ -186,7 +139,7 @@ ${data.trend}
 ${data.smc_summary}${zoneWarn}${rrrWarnMsg}
 
 🖼️ Chart: .chart ${coin} ${timeframe}
-⚡ _.margin_ ලෙ capital set කරන්න.${trackMsg}`;
+⚡ _.margin_ මගින් capital set කරන්න.${trackMsg}`;
             
             await reply(out.trim());
             await m.react('✅');

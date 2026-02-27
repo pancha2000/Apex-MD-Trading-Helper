@@ -15,7 +15,6 @@ async (conn, mek, m, { reply }) => {
         const quotedText = m.quoted.conversation || m.quoted.extendedTextMessage?.text || m.quoted.text || m.quoted.body || "";
         if (!quotedText) return await reply('❌ Quoted message කියවීමට නොහැකිය.');
 
-        // ✅ FIX 1: ඉමෝජි නොමැතිව වුවද කොයින් එක නිවැරදිව හඳුනාගැනීම
         const coinMatch = quotedText.match(/([A-Z]+)\s*\/\s*USDT/);
         
         if (!coinMatch) {
@@ -28,27 +27,26 @@ async (conn, mek, m, { reply }) => {
         const coin = coinMatch[1] + 'USDT';
         const type = quotedText.includes('SPOT') ? 'spot' : 'future';
 
-        // ✅ Entry, TP1, TP2(main), SL parse
-        const targetMatch = quotedText.match(/\[TARGETS\|ENTRY:\s*([0-9.]+)\s*\|TP:\s*([0-9.]+)\s*\|SL:\s*([0-9.]+)\s*\]/);
-        if (!targetMatch) return await reply('❌ Entry/TP/SL data නොමැත. කරුණාකර සම්පූර්ණ රිපෝට් එකට reply කරන්න.');
+        const targetMatch = quotedText.match(/ENTRY:\s*\$([0-9,.]+)\s*\|\s*TP:\s*\$([0-9,.]+)\s*\|\s*SL:\s*\$([0-9,.]+)/i);
+        if (!targetMatch) return await reply('❌ Entry, TP, SL අගයන් සොයාගැනීමට නොහැක. (Track data නොමැත)');
 
-        const entry = parseFloat(targetMatch[1]);
-        const tp    = parseFloat(targetMatch[2]);
-        const sl    = parseFloat(targetMatch[3]);
+        const entry = parseFloat(targetMatch[1].replace(/,/g, ''));
+        const tp = parseFloat(targetMatch[2].replace(/,/g, ''));
+        const sl = parseFloat(targetMatch[3].replace(/,/g, ''));
 
-        // ✅ TP1 parse (Partial TP)
-        const tp1Match = quotedText.match(/TP1.*?:\s*\$([0-9,.]+)/);
+        const tp1Match = quotedText.match(/TP1.*?\s*\$([0-9,.]+)/);
         const tp1 = tp1Match ? parseFloat(tp1Match[1].replace(/,/g, '')) : null;
 
-        // ✅ FIX 2: Direction එක වඩාත් නිවැරදිව හඳුනාගැනීම
-        const dirMatch = quotedText.match(/Smart Entry.*?([A-Z]+)/) || quotedText.match(/Direction.*?(LONG|SHORT|BUY)/);
-        const direction = dirMatch ? (dirMatch[1] === 'BUY' ? 'LONG' : dirMatch[1]) : 'LONG';
+        // ✅ FIX: Bulletproof Direction Detection 
+        // (SHORT අකුර හෝ 🔴 ලකුණ තිබුණොත් අනිවාර්යයෙන්ම SHORT, නැත්නම් LONG)
+        let direction = 'LONG';
+        if (quotedText.includes('SHORT') || quotedText.includes('🔴 SHORT') || quotedText.includes('Bearish')) {
+            direction = 'SHORT';
+        }
 
-        // ✅ RRR parse
-        const rrrMatch = quotedText.match(/RRR.*?1:([\d.]+)/);
-        const rrr = rrrMatch ? `1:${rrrMatch[1]}` : 'N/A';
+        const rrrMatch = quotedText.match(/RRR.*?(1:[\d.]+)/);
+        const rrr = rrrMatch ? rrrMatch[1] : 'N/A';
 
-        // ✅ Limit Order ද Market Order ද යන්න හඳුනාගැනීම
         const isLimit = quotedText.includes('LIMIT ORDER') || quotedText.includes('PENDING') || quotedText.includes('Limit Order set');
         const initialStatus = isLimit ? 'pending' : 'active';
 
@@ -62,7 +60,9 @@ async (conn, mek, m, { reply }) => {
             ? `⏳ *Pending Order:* Market එක $${entry} වෙත පැමිණි පසු Trade එක Auto-Active වනු ඇත.` 
             : `🟢 *Active Order:* Trade එක දැන් සිටම Track වේ.`;
 
-        await reply(`✅ *${coin}* Trade Track ආරම්භ!\n\n📍 Entry: $${entry}\n🎯 TP1: ${tp1 ? '$' + tp1 : 'N/A'}\n🎯 TP2: $${tp}\n🛡️ SL: $${sl}\n📊 Direction: ${direction}\n\n${statusMsg}`);
+        await reply(`✅ *Trade Successfully Tracked!*\n\n🪙 ${coin} (${type.toUpperCase()} | ${direction})\n🎯 Entry: $${entry}\n💰 TP: $${tp}\n🛑 SL: $${sl}\n\n${statusMsg}`);
         await m.react('✅');
-    } catch (e) { await reply('❌ Error: ' + e.message); }
+    } catch (e) {
+        await reply('❌ Error: ' + e.message);
+    }
 });
