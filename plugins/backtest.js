@@ -3,7 +3,7 @@ const config = require('../config');
 const binance = require('../lib/binance');
 const indicators = require('../lib/indicators');
 // ✅ NEW precision indicators for backtest
-const { calculateStochRSI, calculateBollingerBands } = require('../lib/indicators');
+const { calculateStochRSI, calculateBollingerBands, checkMTFRSIConfluence, detectVolumeNodes } = require('../lib/indicators');
 const smc = require('../lib/smartmoney');
 const axios = require('axios');
 
@@ -61,9 +61,11 @@ async (conn, mek, m, { reply, args }) => {
             let volBreak = indicators.checkVolumeBreakout(slice.slice(-50));
             let vwap = indicators.calculateVWAP(slice);
             
-            // ✅ NEW: Precision indicators
+            // ✅ Precision indicators
             let stochRSI = calculateStochRSI(slice.slice(-60));
             let bbands   = calculateBollingerBands(slice.slice(-30));
+            let mtfRSI   = checkMTFRSIConfluence(slice.slice(-50), slice.slice(-50)); // approximate
+            let volNodes = detectVolumeNodes(slice.slice(-50));
 
             let longScore = 0, shortScore = 0;
 
@@ -96,11 +98,16 @@ async (conn, mek, m, { reply, args }) => {
             if (vwap.includes('🟢')) longScore++;
             if (vwap.includes('🔴')) shortScore++;
 
-            // ✅ NEW: StochRSI + BB scoring
+            // ✅ Precision scoring
             if (stochRSI.isBull) longScore++;
             if (stochRSI.isBear) shortScore++;
             if (bbands.isBull) longScore++;
             if (bbands.isBear) shortScore++;
+            if (mtfRSI.signal === 'STRONG_BULL') longScore += 2;
+            if (mtfRSI.signal === 'STRONG_BEAR') shortScore += 2;
+            if (mtfRSI.isBull && mtfRSI.signal !== 'STRONG_BULL') longScore++;
+            if (mtfRSI.isBear && mtfRSI.signal !== 'STRONG_BEAR') shortScore++;
+            if (volNodes.nearHVN) { longScore += 0.5; shortScore += 0.5; }
 
             let tradeTaken = false;
             let isLong = false;
@@ -159,9 +166,10 @@ async (conn, mek, m, { reply, args }) => {
 ▫️ Volume Breakout & VWAP
 ▫️ SMC (OB, Sweeps, ChoCH)
 ▫️ Harmonic Patterns & ICT Silver Bullet
-▫️ Stochastic RSI + Bollinger Bands (NEW 🔥)
+▫️ Stochastic RSI + Bollinger Bands
+▫️ MTF RSI Confluence + Volume Nodes (NEW 🔥)
 ▫️ *NOTE: Live Sentiment + MTF OB Confluence adds in real signals*
-▫️ Run *.future ${coin.replace('USDT','')}* for full 17-factor live signal
+▫️ Run *.future ${coin.replace('USDT','')}* for full 21-factor live signal
 
 *🎯 Performance Results:*
 ▫️ Total Trades: ${totalTrades} (Long: ${longTrades} | Short: ${shortTrades})

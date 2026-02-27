@@ -6,7 +6,6 @@ const binance = require('../lib/binance');
 const analyzer = require('../lib/analyzer'); // ✅ අලුත් මොළය සම්බන්ධ කළා
 const { checkRRR } = require('../lib/indicators');
 const confirmations = require('../lib/confirmations');
-const confirmations = require('../lib/confirmations');
 
 cmd({
     pattern: "future",
@@ -98,6 +97,8 @@ Kill Zone: ${aData.marketSMC.killzone} | Liquidation: ${liqData.sentiment}
 Entry Zone: ${aData.bestEntry.name} | OB Confirmation: ${aData.confirmation.status}
 StochRSI: ${aData.stochRSI.signal} (K:${aData.stochRSI.k}) | BB: ${aData.bbands.signal} | MTF OB: ${aData.mtfOB.confluenceZone ? aData.mtfOB.confluenceZone.display : 'None'}
 Smart SL Method: ${aData.slLabel} | TP Methods: ${aData.tp1Label}, ${aData.tp2Label}, ${aData.tp3Label}
+MTF RSI: ${aData.mtfRSI.signal} | Volume Node: ${aData.volNodes.nearHVN ? 'At HVN (good entry)' : 'Not at HVN'} 
+Session: ${aData.session.quality} (${aData.session.session}) | Candle Close: ${aData.candleConf.confirmed ? 'CONFIRMED' : 'Pending'}
 Funding Rate: ${fundingRate} | Whale Buy Wall: $${whaleWalls.supportWall} | Sell: $${whaleWalls.resistWall}
 
 === SENTIMENT LAYER (USE THIS TO CONFIRM/REJECT) ===
@@ -153,7 +154,12 @@ JSON ONLY: {"direction":"${aData.direction} or WAIT","emoji":"🟢 or 🔴 or �
 
         const zoneWarn = aData.bestEntry.warning ? `\n\n${aData.bestEntry.warning}` : "";
         const trackMsg = data.direction !== "WAIT" && !aData.isTrueChoppy ? `\n📌 Track: .track reply\n[TARGETS|ENTRY:${data.entry}|TP:${data.tp2}|SL:${data.sl}]` : "";
-        const asianWarning = aData.marketSMC.killzone.includes("Asian") ? "\n⚠️ *ASIAN SESSION* - Fakeout risk ඉහළ. Wait recommended." : "";
+        const sessionWarn = aData.session.quality === 'AVOID' 
+            ? "\n🔴 *OFF-HOURS* - Very low volume. Avoid new entries."
+            : aData.session.quality === 'CAUTION'
+                ? "\n⚠️ *ASIAN SESSION* - Low volume, fakeout risk. Wait for London (08:00 UTC)."
+                : "";
+        const asianWarning = sessionWarn;
         
         let dangerWarning = "";
         if (!settings.strictMode && (aData.score < 5 || !rrrCheck.pass)) { dangerWarning = `\n\n🚨 *AI WARNING: DO NOT TAKE THIS TRADE!*`; }
@@ -173,9 +179,13 @@ ${dangerWarning}
 *🔬 5m MTF Confirmation:*
 ${aData.mtf5m.status}
 
-*📐 Precision Indicators:*
-📊 StochRSI: ${aData.stochRSI.signal} (K:${aData.stochRSI.k} D:${aData.stochRSI.d})
-📉 Bollinger: ${aData.bbands.signal} | %B: ${aData.bbands.percentB}%${aData.bbands.squeeze ? '\n⚡ *BB SQUEEZE DETECTED* - Breakout imminent!' : ''}${aData.mtfOB.confluenceZone ? '\n🔥 *MTF OB CONFLUENCE:* ' + aData.mtfOB.confluenceZone.display : ''}
+*📐 Entry Confirmation Suite:*
+📊 StochRSI: ${aData.stochRSI.signal} (K:${aData.stochRSI.k})
+📉 Bollinger: ${aData.bbands.signal} | %B: ${aData.bbands.percentB}%${aData.bbands.squeeze ? '\n⚡ *BB SQUEEZE* - Breakout imminent!' : ''}
+📈 MTF RSI: ${aData.mtfRSI.display}
+🕒 Session: ${aData.session.display}
+📦 Volume: ${aData.volNodes.display}
+🕯️ Candle: ${aData.candleConf.display}${aData.mtfOB.confluenceZone ? '\n🔥 *MTF OB:* ' + aData.mtfOB.confluenceZone.display : ''}
 
 *🎯 Smart Entry* ${data.emoji} ${data.direction}
 🏹 Zone: ${aData.bestEntry.name}
