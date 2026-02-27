@@ -28,8 +28,13 @@ async (conn, mek, m, { reply, args }) => {
 
         // 🧠 1. Analyzer එකෙන් Data ගැනීම (කලින් පේළි 100ක වැඩේ එක පේළියෙන්)
         const aData = await analyzer.run14FactorAnalysis(coin, timeframe);
-        const liqData = await binance.getLiquidationData(coin);
-        const whaleWalls = await binance.getLiquidityWalls(coin);
+        // 🌐 Parallel fetch - all external data එකවර ගන්නවා (speed)
+        const [liqData, whaleWalls, fundingRate, sentiment] = await Promise.all([
+            binance.getLiquidationData(coin),
+            binance.getLiquidityWalls(coin),
+            binance.getFundingRate(coin),
+            binance.getMarketSentiment(coin),  // ✅ NEW: Sentiment Layer
+        ]);
 
         // ⚙️ 2. Settings & RRR Filter
         const settings = await db.getSettings();
@@ -66,18 +71,46 @@ async (conn, mek, m, { reply, args }) => {
             qtyText    = `${qtyFormatted} ${coin.replace('USDT','')}`;
         }
 
-        // 🤖 4. AI Prompt Generation
-        const prompt = `Analyze ${coin} FUTURES. Current: $${aData.priceStr}
-[SCORE: ${aData.score}/${aData.maxScore}] Confluences: ${aData.reasons}
+        // ✅ Sentiment Confirmation
+        const sentimentBoost = parseFloat(sentiment.totalBias) > 1 ? '✅ CONFIRMED (Sentiment aligned)' :
+                               parseFloat(sentiment.totalBias) < -1 ? '⛔ CONFLICTING (Sentiment against)' : '⚠️ NEUTRAL';
+        const sentimentAligned = 
+            (aData.direction === 'LONG' && parseFloat(sentiment.totalBias) >= 0.5) ||
+            (aData.direction === 'SHORT' && parseFloat(sentiment.totalBias) <= -0.5);
+
+        // 🤖 4. Enhanced AI Prompt (Sentiment + Technical combined)
+        const headlineStr = sentiment.newsHeadlines.slice(0,3).join(' | ');
+        const prompt = `Analyze ${coin} FUTURES trade signal. Current: $${aData.priceStr}
+
+=== TECHNICAL (14-FACTOR SCORE: ${aData.score}/${aData.maxScore}) ===
+Confluences: ${aData.reasons}
 Market: ${aData.marketState} | Trend: ${aData.mainTrend} | MTF: 4H=${aData.trend4H} 1H=${aData.trend1H}
 ADX: ${aData.adxData.status} | RSI: ${aData.rsi} | VWAP: ${aData.vwap}
 OB Bull: ${aData.marketSMC.bullishOBDisplay} | OB Bear: ${aData.marketSMC.bearishOBDisplay}
 Kill Zone: ${aData.marketSMC.killzone} | Liquidation: ${liqData.sentiment}
-Entry Zone: ${aData.bestEntry.name} | Confirmation: ${aData.confirmation.status}
+Entry Zone: ${aData.bestEntry.name} | OB Confirmation: ${aData.confirmation.status}
+Funding Rate: ${fundingRate} | Whale Buy Wall: $${whaleWalls.supportWall} | Sell: $${whaleWalls.resistWall}
 
-STRICT MATH: direction: "${aData.direction}", entry: "${aData.entryPrice}", tp1: "${aData.tp1}", tp2: "${aData.tp2}", sl: "${aData.sl}", rrr: "1:${rrrStr}"
-Output JSON only: {"direction":"${aData.direction} or WAIT","emoji":"🟢 or 🔴 or ⚪","entry":"${aData.entryPrice}","tp1":"${aData.tp1}","tp2":"${aData.tp2}","sl":"${aData.sl}","rrr":"1:${rrrStr}","leverage":"${levText}","margin":"${marginText}","qty":"${qtyText}","risk":"${riskText}","confidence":"XX%","trend":"sinhala","smc_summary":"sinhala"}`;
+=== SENTIMENT LAYER (USE THIS TO CONFIRM/REJECT) ===
+Fear & Greed: ${sentiment.fngValue}/100 (${sentiment.fngLabel})
+BTC Dominance: ${sentiment.btcDominance}% (>55% alts suffer, <45% altseason)
+News Sentiment Score: ${sentiment.newsSentimentScore} (-5 bearish to +5 bullish)
+Coin-specific news hits: ${sentiment.coinNewsHits}
+Latest Headlines: ${headlineStr}
+Overall Market Bias: ${sentiment.overallSentiment}
+Sentiment vs Technical Signal: ${sentimentBoost}
 
+=== AI DECISION RULES ===
+1. If sentiment CONFLICTS with tech direction, lower confidence by 20% and warn
+2. If sentiment CONFIRMS tech direction, boost confidence by 10%
+3. Funding >0.1% + LONG = caution (longs getting squeezed)
+4. Funding <-0.1% + SHORT = caution (shorts getting squeezed)
+5. F&G >80 (Extreme Greed) + LONG = risky, mention
+6. F&G <20 (Extreme Fear) + SHORT = risky, mention
+
+STRICT MATH (keep exactly): entry:"${aData.entryPrice}", tp1:"${aData.tp1}", tp2:"${aData.tp2}", sl:"${aData.sl}", rrr:"1:${rrrStr}"
+
+JSON ONLY: {"direction":"${aData.direction} or WAIT","emoji":"🟢 or 🔴 or ⚪","entry":"${aData.entryPrice}","tp1":"${aData.tp1}","tp2":"${aData.tp2}","sl":"${aData.sl}","rrr":"1:${rrrStr}","leverage":"${levText}","margin":"${marginText}","qty":"${qtyText}","risk":"${riskText}","confidence":"XX%","trend":"sinhala 2 lines max","smc_summary":"sinhala 1 line","sentiment_note":"sinhala 1 line on news/sentiment impact on this trade"}`;
         const aiRes = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
             model: "llama-3.3-70b-versatile",
             messages: [{ role: "user", content: prompt }]
@@ -87,6 +120,7 @@ Output JSON only: {"direction":"${aData.direction} or WAIT","emoji":"🟢 or �
         const jm   = raw.match(/\{[\s\S]*\}/);
         if (!jm) throw new Error(`AI JSON error`);
         const data = JSON.parse(jm[0]);
+        const sentimentNote = data.sentiment_note || sentiment.tradingBias;
 
         // 🕸️ 5. Grid Generation
         let gridStr = "";
@@ -147,6 +181,13 @@ RRR: ${data.rrr} ${rrrCheck.pass ? '✅' : '⚠️'}
 *🐋 Whale Tracking (Orderbook):*
 🟢 Buy Wall (Support): $${whaleWalls.supportWall} (${whaleWalls.supportVol} USDT)
 🔴 Sell Wall (Resist): $${whaleWalls.resistWall} (${whaleWalls.resistVol} USDT)
+💸 Funding Rate: ${fundingRate}
+
+*🧠 Sentiment Layer:*
+${sentiment.fngEmoji} F&G: ${sentiment.fngValue} (${sentiment.fngLabel})
+₿ BTC.D: ${sentiment.btcDominance}%  📰 News Score: ${sentiment.newsSentimentScore > 0 ? '+' : ''}${sentiment.newsSentimentScore}
+${sentimentAligned ? '✅' : '⚠️'} Signal vs Market: ${sentimentBoost}
+💬 ${sentimentNote}
 
 *💡 Analysis:*
 ${data.trend}

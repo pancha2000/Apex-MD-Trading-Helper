@@ -5,6 +5,19 @@ const axios = require('axios');
 const binance = require('../lib/binance');
 const analyzer = require('../lib/analyzer'); // ✅ අලුත් මොළය සම්බන්ධ කළා
 
+// ✅ Cache sentiment data (1 per scan cycle, not per coin)
+let cachedSentiment = null;
+let sentimentCacheTime = 0;
+const SENTIMENT_CACHE_MS = 5 * 60 * 1000; // 5 minutes
+
+async function getSentimentCached() {
+    if (!cachedSentiment || Date.now() - sentimentCacheTime > SENTIMENT_CACHE_MS) {
+        cachedSentiment = await binance.getMarketSentiment().catch(() => ({ totalBias: '0', overallSentiment: 'NEUTRAL', tradingBias: 'Neutral' }));
+        sentimentCacheTime = Date.now();
+    }
+    return cachedSentiment;
+}
+
 // ─── 1. TOP 5 SETUPS SCANNER ───
 async function getTopDownSetups() {
     let foundSetups = [];
@@ -18,18 +31,31 @@ async function getTopDownSetups() {
             const aData = await analyzer.run14FactorAnalysis(coin, '15m');
 
             if (aData.score >= 5) {
+                const sent = await getSentimentCached();
+                const sentBias = parseFloat(sent.totalBias) || 0;
+                // ✅ Sentiment bonus/penalty on score
+                const sentBonus = 
+                    (aData.direction === 'LONG' && sentBias >= 1) ? 1 :
+                    (aData.direction === 'SHORT' && sentBias <= -1) ? 1 :
+                    (aData.direction === 'LONG' && sentBias <= -1) ? -1 :
+                    (aData.direction === 'SHORT' && sentBias >= 1) ? -1 : 0;
+                const adjustedScore = aData.score + sentBonus;
+
                 const typeStr = aData.direction === 'LONG' ? 'LONG 🟢' : 'SHORT 🔴';
+                const sentEmoji = sentBonus > 0 ? '📰✅' : sentBonus < 0 ? '📰⚠️' : '';
                 foundSetups.push({
                     coin: coin.replace('USDT', ''),
                     type: typeStr,
-                    rawScore: aData.score,
-                    score: `${aData.score}/14`,
+                    rawScore: adjustedScore,
+                    score: `${adjustedScore}/15`,  // 14 tech + 1 sentiment
                     price: aData.priceStr,
                     tp1: aData.tp1,
                     tp: aData.tp2,
                     sl: aData.sl,
                     adx: aData.adxData.value,
-                    reasons: aData.reasons
+                    reasons: aData.reasons,
+                    sentEmoji,
+                    sentBias: sentBias.toFixed(1)
                 });
             }
         } catch (err) { }
@@ -58,6 +84,8 @@ async (conn, mek, m, { reply }) => {
 
     const ownerJid = m.sender || mek.sender;
     await reply("✅ *AUTO ENGINE STARTED!*\n\nමෙම චැට් එකට සෑම විනාඩි 5කට වරක්ම Top 5 Signals ලැබෙනු ඇත. පළමු ස්කෑන් කිරීම දැන් සිදුවේ... ⏳");
+    // ✅ NEW: Daily Summary scheduler start
+    await startDailySummary(conn, ownerJid);
 
     // ─── TRADE MANAGER (මිනිත්තුවෙන් මිනිත්තුව Trades පරීක්ෂා කිරීම) ───
     activeTradeManager = setInterval(async () => {
@@ -189,8 +217,9 @@ async (conn, mek, m, { reply }) => {
                                         
                                         // PnL එක -0.5% සහ +0.5% අතර නම් (Break-even කිට්ටුව නම්)
                                         if (pnlPct >= -0.5 && pnlPct <= 0.5) {
-                                            // පරණ එක Break-even දී Close කරයි
+                                            // ✅ BUG FIX 1: updatePaperBalance call කිරීම (Break-even trades stats update)
                                             await db.closeTrade(activeT._id, 'BREAK-EVEN', pnlPct, 0);
+                                            await db.updatePaperBalance(activeT.userJid, 0, false, true); // isBreakEven=true
                                             await conn.sendMessage(ownerJid, { text: `🔄 *SMART REPLACEMENT ACTIVATED!*\n${activeT.coin} Trade එක Break-even හිදී වසා දමා, අලුත් (Score: ${s.score}) සුපිරි Trade එකට ඉඩ ලබා දෙන ලදී.` });
                                             
                                             // අලුත් Trade එක දායි
@@ -258,15 +287,73 @@ async (conn, mek, m, { reply }) => {
             return await reply(`╔═══════════════════════════╗\n║ 🔍 *SUPER SCAN RESULTS* ║\n╚═══════════════════════════╝\n\nමෙම මොහොතේ ලකුණු 5/14 ට වඩා ලබාගත් ෂුවර් Setups කිසිවක් මාකට් එකේ Top Coins 30 තුළ නොමැත. ⚪`);
         }
 
+        const sentForScan = await getSentimentCached();
         let outMsg = `╔═══════════════════════════╗\n║ 🎯 *TOP 5 SNIPER SETUPS* ║\n╚═══════════════════════════╝\n\n`;
+        outMsg += `🧠 *Market Sentiment:* ${sentForScan.overallSentiment}\n`;
+        outMsg += `${sentForScan.fngEmoji} F&G: ${sentForScan.fngValue} | ₿ BTC.D: ${sentForScan.btcDominance}% | 📰 News: ${sentForScan.newsSentimentScore > 0 ? '+' : ''}${sentForScan.newsSentimentScore}\n\n`;
         setups.forEach((s, i) => {
-            outMsg += `*${i + 1}. #${s.coin}* - ${s.type} (Score: ${s.score} ⭐)\n   📍 Price: $${s.price}\n   🔥 ADX Trend: ${s.adx}\n   ✔️ Reasons: ${s.reasons}\n   ⏳ *Recommended:* 15m (Scalp)\n   🤖 AI Check: ${config.PREFIX}future ${s.coin} 15m\n\n`;
+            outMsg += `*${i + 1}. #${s.coin}* - ${s.type} (Score: ${s.score} ⭐) ${s.sentEmoji || ''}\n   📍 Price: $${s.price}\n   🔥 ADX: ${s.adx}\n   ✔️ Reasons: ${s.reasons}\n   🤖 AI Check: ${config.PREFIX}future ${s.coin} 15m\n\n`;
         });
         
         await reply(outMsg.trim());
         await m.react('✅');
     } catch (e) { await reply('❌ Error: ' + e.message); }
 });
+
+// ─── DAILY SUMMARY (Midnight Auto Report) ───
+async function startDailySummary(conn, ownerJid) {
+    // සෑම දිනකම midnight UTC 00:00 ට Daily P&L Summary
+    const msUntilMidnight = () => {
+        const now = new Date();
+        const midnight = new Date();
+        midnight.setUTCHours(24, 0, 0, 0);
+        return midnight - now;
+    };
+
+    const sendDailySummary = async () => {
+        try {
+            const user = await db.getUser(ownerJid);
+            const stats = await db.getTradeStats(ownerJid);
+            const startBal = user.paperStartBalance || 100;
+            const netPnL = user.paperBalance - startBal;
+            const pnlEmoji = netPnL >= 0 ? '📈' : '📉';
+            const winRate = user.paperTrades > 0 ? ((user.paperWins / user.paperTrades) * 100).toFixed(1) : 0;
+
+            const todayTrades = await db.Trade.find({
+                isPaper: true,
+                status: 'closed',
+                updatedAt: { $gte: new Date(new Date().setUTCHours(0,0,0,0)) }
+            }).catch(() => []);
+
+            let todayPnL = 0;
+            todayTrades.forEach(t => todayPnL += (t.paperProfit || 0));
+
+            const summary = `
+🌙 *DAILY TRADING SUMMARY*
+_${new Date().toUTCString().slice(0,16)}_
+
+*🤖 Paper Trading:*
+💰 Balance: $${user.paperBalance.toFixed(2)}
+${pnlEmoji} Total P&L: ${netPnL >= 0 ? '+' : ''}$${netPnL.toFixed(2)}
+📊 Today's P&L: ${todayPnL >= 0 ? '+' : ''}$${todayPnL.toFixed(2)}
+🎯 Win Rate: ${winRate}% (${user.paperWins}W / ${user.paperLosses}L)
+
+*📋 Real Trades:*
+📌 Active: ${stats.active}
+📁 Closed Total: ${stats.total}
+🏆 Win Rate: ${stats.winRate}%
+
+_Tomorrow also good trading! 🚀_`;
+
+            await conn.sendMessage(ownerJid, { text: summary.trim() });
+        } catch (e) { console.log('Daily summary error:', e.message); }
+
+        // ඊළඟ දිනටත් schedule
+        setTimeout(sendDailySummary, msUntilMidnight());
+    };
+
+    setTimeout(sendDailySummary, msUntilMidnight());
+}
 
 // ─── HELPER FUNCTION: PLACE PAPER TRADE ───
 async function placePaperTrade(s, user, ownerJid, conn) {
