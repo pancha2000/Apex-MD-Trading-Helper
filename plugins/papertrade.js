@@ -162,13 +162,18 @@ cmd({
         const tpPct = (Math.abs(tp - entry) / entry * 100).toFixed(2);
         const rrr = (Math.abs(tp - entry) / Math.abs(entry - sl)).toFixed(2);
 
+        // Determine if limit order (price not at entry) or market order
+        const isAtEntry = livePrice && Math.abs(livePrice - entry) / entry < 0.005;
+        const tradeStatus = isAtEntry ? 'active' : 'pending';
+        const orderType = isAtEntry ? 'MARKET' : 'LIMIT';
+
         // Save trade
         await db.saveTrade({
             userJid: m.sender,
             coin, type: 'future', direction,
             entry, tp, tp1: tp1 || tp, tp2: tp, sl,
             rrr: `1:${rrr}`,
-            status: 'active',
+            status: tradeStatus,
             isPaper: true,
             leverage, quantity, marginUsed,
             score, timeframe
@@ -197,7 +202,8 @@ cmd({
 💰 Margin:    $${marginUsed.toFixed(2)} USDT
 🛡️ Risk:      $${riskAmt.toFixed(2)} (2% rule)
 
-*Status:* ${priceStatus}
+*Order Type:* ${orderType === 'MARKET' ? '⚡ MARKET ORDER (Active Now)' : '⏳ LIMIT ORDER (Entry zone ලඟා වෙනකම් pending)'}
+*Status:* ${tradeStatus === 'active' ? '🟢 ACTIVE' : '🟡 PENDING - Entry Fill වෙනකම් බලන්න'}
 
 📊 Live P&L → *.myptrades*
 🗑️ Close → *.closepaper ${coin}*`.trim());
@@ -269,9 +275,19 @@ cmd({
             const openTime = new Date(t.openTime);
             const hoursOpen = ((Date.now() - openTime) / 3600000).toFixed(1);
 
+            const statusTag = t.status === 'pending'
+                ? '⏳ *LIMIT ORDER* - Entry Fill බලාසිටී'
+                : '🟢 *ACTIVE*';
+
             msg += `*${i+1}. ${coinBase}/USDT* ${dirEmoji} ${t.direction} (${t.leverage || '?'}x)\n`;
+            msg += `${statusTag}\n`;
             msg += `📍 Entry: $${t.entry} → 💹 Live: ${livePrice ? '$' + livePrice.toFixed(4) : 'N/A'}\n`;
-            msg += `${pnlEmoji} *Unrealized PnL: ${pnlStr}*\n`;
+            if (t.status === 'pending' && livePrice) {
+                const distToEntry = ((Math.abs(livePrice - t.entry) / t.entry) * 100).toFixed(2);
+                const direction_to_entry = (t.direction === 'LONG' && livePrice > t.entry) ? '📉 Price drop' : (t.direction === 'SHORT' && livePrice < t.entry) ? '📈 Price rise' : '📍 Near entry';
+                msg += `⏳ Entry Zone: ${distToEntry}% away (${direction_to_entry} needed)\n`;
+            }
+            msg += `${pnlEmoji} *Unrealized PnL: ${t.status === 'pending' ? '⏳ Pending...' : pnlStr}*\n`;
             msg += `🎯 TP: $${t.tp} (${distToTP}% away) | 🛡️ SL: $${t.sl} (${distToSL}% away)\n`;
             msg += `💰 Margin: $${(t.marginUsed||0).toFixed(2)} | 📦 Qty: ${(t.quantity||0).toFixed(4)} ${coinBase}\n`;
             msg += `⏱️ Open ${hoursOpen}h | 🆔 ${t._id.toString().slice(-6)}\n\n`;

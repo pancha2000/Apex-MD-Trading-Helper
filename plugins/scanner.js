@@ -72,7 +72,7 @@ function startTradeManager(conn) {
 
     activeTradeManager = setInterval(async () => {
         try {
-            const activeTrades = await db.Trade.find({ isPaper: false, status: { $in: ['active', 'pending'] } });
+            const activeTrades = await db.Trade.find({ status: { $in: ['active', 'pending'] } });
             if (!activeTrades || activeTrades.length === 0) return;
 
             const currentSettings = await db.getSettings();
