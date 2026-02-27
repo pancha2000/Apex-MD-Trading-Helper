@@ -111,13 +111,14 @@ async (conn, mek, m, { reply }) => {
                     }
 
                     // CLOSING LOGIC (TP or SL)
+                    // ✅ FIX 5: LOSS pnlPct දී currentPrice නොව SL price use කරනවා
                     let closed = false, result = '', pnlPct = 0;
                     if (isLong) {
                         if (currentPrice >= trade.tp) { closed = true; result = 'WIN'; pnlPct = ((trade.tp - trade.entry)/trade.entry)*100*10; }
-                        else if (currentPrice <= trade.sl) { closed = true; result = trade.sl === trade.entry ? 'BREAK-EVEN' : 'LOSS'; pnlPct = ((currentPrice - trade.entry)/trade.entry)*100*10; }
+                        else if (currentPrice <= trade.sl) { closed = true; result = trade.sl === trade.entry ? 'BREAK-EVEN' : 'LOSS'; pnlPct = ((trade.sl - trade.entry)/trade.entry)*100*10; }
                     } else {
                         if (currentPrice <= trade.tp) { closed = true; result = 'WIN'; pnlPct = ((trade.entry - trade.tp)/trade.entry)*100*10; }
-                        else if (currentPrice >= trade.sl) { closed = true; result = trade.sl === trade.entry ? 'BREAK-EVEN' : 'LOSS'; pnlPct = ((trade.entry - currentPrice)/trade.entry)*100*10; }
+                        else if (currentPrice >= trade.sl) { closed = true; result = trade.sl === trade.entry ? 'BREAK-EVEN' : 'LOSS'; pnlPct = ((trade.entry - trade.sl)/trade.entry)*100*10; }
                     }
 
                     // UPDATE PNL AND BALANCE IF CLOSED
@@ -129,11 +130,13 @@ async (conn, mek, m, { reply }) => {
                             const slDist = Math.abs(trade.entry - trade.sl);
                             const qty = riskAmountDollars / slDist; 
                             
+                            // ✅ FIX 5: LOSS දී currentPrice නොව SL price use කරනවා (නිවැරදි PnL)
                             if (result === 'WIN') { paperProfit = qty * Math.abs(trade.entry - trade.tp); } 
-                            else if (result === 'LOSS') { paperProfit = -Math.abs(qty * Math.abs(trade.entry - currentPrice)); }
+                            else if (result === 'LOSS') { paperProfit = -Math.abs(qty * Math.abs(trade.entry - trade.sl)); }
                             else if (result === 'BREAK-EVEN') { paperProfit = 0; }
                             
-                            await db.updatePaperBalance(trade.userJid, paperProfit, result === 'WIN');
+                            // ✅ FIX 4: Break-even isBreakEven=true pass කරනවා
+                            await db.updatePaperBalance(trade.userJid, paperProfit, result === 'WIN', result === 'BREAK-EVEN');
                         }
 
                         await db.closeTrade(trade._id, result, pnlPct, paperProfit);

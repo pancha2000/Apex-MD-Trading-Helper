@@ -15,7 +15,11 @@ async (conn, mek, m, { reply }) => {
         const quotedText = m.quoted.conversation || m.quoted.extendedTextMessage?.text || m.quoted.text || m.quoted.body || "";
         if (!quotedText) return await reply('❌ Quoted message කියවීමට නොහැකිය.');
 
-        const coinMatch = quotedText.match(/([A-Z]+)\s*\/\s*USDT/);
+        // ✅ FIX 1: Coin match - /USDT format සහ plain coin name දෙකම support
+        const coinMatch = quotedText.match(/([A-Z]{2,10})\s*\/\s*USDT/) 
+            || quotedText.match(/\[TARGETS\|ENTRY:[0-9.]+\|TP:[0-9.]+\|SL:[0-9.]+\]\s*\(([A-Z]{2,10})USDT\)/)
+            || quotedText.match(/🪙\s*([A-Z]{2,10})\s*\/\s*USDT/)
+            || quotedText.match(/\b([A-Z]{2,10})USDT\b/);
         
         if (!coinMatch) {
             if (quotedText.includes("⏳")) {
@@ -24,10 +28,16 @@ async (conn, mek, m, { reply }) => {
             return await reply('❌ නිවැරදි Analysis message එකක් නොවේ. (Coin එක සොයාගැනීමට නොහැක)');
         }
         
-        const coin = coinMatch[1] + 'USDT';
+        const coin = (coinMatch[1] || coinMatch[2]).replace('USDT', '') + 'USDT';
         const type = quotedText.includes('SPOT') ? 'spot' : 'future';
 
-        const targetMatch = quotedText.match(/ENTRY:\s*\$([0-9,.]+)\s*\|\s*TP:\s*\$([0-9,.]+)\s*\|\s*SL:\s*\$([0-9,.]+)/i);
+        // ✅ FIX 2: Format දෙකම support කරනවා:
+        //   Format A: "ENTRY: $1234 | TP: $1300 | SL: $1200"  (future.js style)
+        //   Format B: "[TARGETS|ENTRY:1234|TP:1300|SL:1200]"   (spot.js style)
+        const targetMatch = 
+            quotedText.match(/ENTRY:\s*\$([0-9,.]+)\s*\|\s*TP:\s*\$([0-9,.]+)\s*\|\s*SL:\s*\$([0-9,.]+)/i) ||
+            quotedText.match(/\[TARGETS\|ENTRY:([0-9,.]+)\|TP:([0-9,.]+)\|SL:([0-9,.]+)\]/i);
+        
         if (!targetMatch) return await reply('❌ Entry, TP, SL අගයන් සොයාගැනීමට නොහැක. (Track data නොමැත)');
 
         const entry = parseFloat(targetMatch[1].replace(/,/g, ''));
