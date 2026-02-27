@@ -129,10 +129,10 @@ ${aData.mtf5m.status}
 🔔 ${aData.confirmation.status}
 
 🎯 *Take Profits:*
-   ▪️ TP1 (Partial 50%): $${data.tp1}
-   ▪️ TP2 (Main 50%):    $${data.tp2}
-   ▪️ TP3 (Moon):        $${data.tp3}
-🛡️ SL (Zone Invalidation): $${data.sl}
+   ▪️ TP1 (33% - ${aData.tp1Label}): $${data.tp1}
+   ▪️ TP2 (33% - ${aData.tp2Label}): $${data.tp2}
+   ▪️ TP3 (34% - ${aData.tp3Label}): $${aData.tp3}
+🛡️ SL (${aData.slLabel}): $${data.sl}
 
 *⚖️ Risk Management (2% Rule)*
 RRR: ${data.rrr} ${rrrCheck.pass ? '✅' : '⚠️'}

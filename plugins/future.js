@@ -89,13 +89,15 @@ async (conn, mek, m, { reply, args }) => {
         const headlineStr = sentiment.newsHeadlines.slice(0,3).join(' | ');
         const prompt = `Analyze ${coin} FUTURES trade signal. Current: $${aData.priceStr}
 
-=== TECHNICAL (14-FACTOR SCORE: ${aData.score}/${aData.maxScore}) ===
+=== TECHNICAL (${aData.maxScore}-FACTOR SCORE: ${aData.score}/${aData.maxScore}) ===
 Confluences: ${aData.reasons}
 Market: ${aData.marketState} | Trend: ${aData.mainTrend} | MTF: 4H=${aData.trend4H} 1H=${aData.trend1H}
 ADX: ${aData.adxData.status} | RSI: ${aData.rsi} | VWAP: ${aData.vwap}
 OB Bull: ${aData.marketSMC.bullishOBDisplay} | OB Bear: ${aData.marketSMC.bearishOBDisplay}
 Kill Zone: ${aData.marketSMC.killzone} | Liquidation: ${liqData.sentiment}
 Entry Zone: ${aData.bestEntry.name} | OB Confirmation: ${aData.confirmation.status}
+StochRSI: ${aData.stochRSI.signal} (K:${aData.stochRSI.k}) | BB: ${aData.bbands.signal} | MTF OB: ${aData.mtfOB.confluenceZone ? aData.mtfOB.confluenceZone.display : 'None'}
+Smart SL Method: ${aData.slLabel} | TP Methods: ${aData.tp1Label}, ${aData.tp2Label}, ${aData.tp3Label}
 Funding Rate: ${fundingRate} | Whale Buy Wall: $${whaleWalls.supportWall} | Sell: $${whaleWalls.resistWall}
 
 === SENTIMENT LAYER (USE THIS TO CONFIRM/REJECT) ===
@@ -171,6 +173,10 @@ ${dangerWarning}
 *🔬 5m MTF Confirmation:*
 ${aData.mtf5m.status}
 
+*📐 Precision Indicators:*
+📊 StochRSI: ${aData.stochRSI.signal} (K:${aData.stochRSI.k} D:${aData.stochRSI.d})
+📉 Bollinger: ${aData.bbands.signal} | %B: ${aData.bbands.percentB}%${aData.bbands.squeeze ? '\n⚡ *BB SQUEEZE DETECTED* - Breakout imminent!' : ''}${aData.mtfOB.confluenceZone ? '\n🔥 *MTF OB CONFLUENCE:* ' + aData.mtfOB.confluenceZone.display : ''}
+
 *🎯 Smart Entry* ${data.emoji} ${data.direction}
 🏹 Zone: ${aData.bestEntry.name}
 📍 Entry: $${data.entry}
@@ -179,9 +185,10 @@ ${aData.mtf5m.status}
 🔔 ${aData.confirmation.status}
 
 🎯 *Take Profits:*
-   ▪️ TP1 (Partial 50%): $${data.tp1}
-   ▪️ TP2 (Final 50%):   $${data.tp2}
-🛡️ SL (Zone Invalidation): $${data.sl}
+   ▪️ TP1 (33% - ${aData.tp1Label}): $${data.tp1}
+   ▪️ TP2 (33% - ${aData.tp2Label}): $${data.tp2}
+   ▪️ TP3 (34% - ${aData.tp3Label}): $${aData.tp3}
+🛡️ SL (${aData.slLabel}): $${data.sl}
 
 *⚖️ Risk Management*
 RRR: ${data.rrr} ${rrrCheck.pass ? '✅' : '⚠️'}
