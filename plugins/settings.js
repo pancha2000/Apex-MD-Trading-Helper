@@ -4,8 +4,8 @@ const config = require('../config');
 
 cmd({
     pattern: "settings",
-    alias: ["botsettings", "control"],
-    desc: "Bot Control Panel (Owner Only)",
+    alias: ["botsettings", "control", "panel"],
+    desc: "Master Bot Control Panel (Owner Only)",
     category: "owner",
     isOwner: true,
     react: "⚙️",
@@ -16,34 +16,28 @@ async (conn, mek, m, { reply }) => {
         const s = await db.getSettings();
         const msg = `
 ╔═══════════════════════════╗
-║  ⚙️ *APEX-MD CONTROL PANEL* ║
+║ ⚙️ *APEX-MD MASTER PANEL* ║
 ╚═══════════════════════════╝
 
+*--- 🚀 Core Engine Settings ---*
 *1. Auto Signals:* ${s.autoSignal ? '✅ ON' : '❌ OFF'}
-   _(සෑම විනාඩි 5කට වරක් Top 30 Coins ස්කෑන් කිරීම)_
-
 *2. Trailing SL:* ${s.trailingSl ? '✅ ON' : '❌ OFF'}
-   _(Market 1:1 Profit ආ විට SL අගය Entry වෙත ගෙන ඒම)_
+*3. Strict Mode:* ${s.strictMode ? '✅ ON' : '❌ OFF'}
+*4. Partial TP:* ${s.partialTp ? '✅ ON' : '❌ OFF'}
+*5. Min RRR:* ${s.minRRR}x
 
-*3. Trend Filter:* ${s.trendFilter ? '✅ ON' : '❌ OFF'}
-   _(Extreme Fear Market එකේදී Trades Block කිරීම)_
-
-*4. Strict Mode:* ${s.strictMode ? '✅ ON' : '❌ OFF'}
-   _(Score මදි වූ විට හෝ RRR Fail වූ විට Trades Block කිරීම)_
-
-*5. Partial TP Alerts:* ${s.partialTp ? '✅ ON' : '❌ OFF'}
-   _(TP1 Hit වූ විට 50% Close කිරීමට Alert එකක් දීම)_
-
-*6. Min RRR:* ${s.minRRR || 1.5}x
-   _(Trade එකක් ගැනීමට තිබිය යුතු අවම RRR අගය)_
+*--- 📝 Paper Trading Settings ---*
+*6. Auto Paper Trade:* ${s.paperTrade ? '🟢 ON' : '🔴 OFF'}
+*7. Paper Min Score:* ${s.paperMinScore}/14
 
 📌 *වෙනස් කිරීමට පහත කමාන්ඩ්ස් භාවිතා කරන්න:*
 ${config.PREFIX}set 1 on/off  → Auto Signals
 ${config.PREFIX}set 2 on/off  → Trailing SL
-${config.PREFIX}set 3 on/off  → Trend Filter
-${config.PREFIX}set 4 on/off  → Strict Mode
-${config.PREFIX}set 5 on/off  → Partial TP
-${config.PREFIX}set 6 1.5     → Min RRR value`;
+${config.PREFIX}set 3 on/off  → Strict Mode
+${config.PREFIX}set 4 on/off  → Partial TP Alerts
+${config.PREFIX}set 5 1.5     → Min RRR value
+${config.PREFIX}set 6 on/off  → Auto Paper Trading
+${config.PREFIX}set 7 6       → Paper Trade Min Score`;
 
         await reply(msg.trim());
     } catch (e) { await reply('❌ Error: ' + e.message); }
@@ -59,7 +53,7 @@ cmd({
 },
 async (conn, mek, m, { reply, args }) => {
     try {
-        if (!args[0] || !args[1]) return await reply(`❌ නිවැරදිව ලබා දෙන්න.\n*උදා:* ${config.PREFIX}set 4 off`);
+        if (!args[0] || !args[1]) return await reply(`❌ නිවැරදිව ලබා දෙන්න.\n*උදා:* ${config.PREFIX}set 3 off`);
 
         const num   = args[0];
         const value = args[1].toLowerCase();
@@ -68,22 +62,24 @@ async (conn, mek, m, { reply, args }) => {
         let updateData = {}, featureName = "";
 
         if (num === '1') { updateData.autoSignal = state;  featureName = "Auto Signals"; }
-        else if (num === '2') { updateData.trailingSl = state;  featureName = "Trailing SL (Risk-Free Mode)"; }
-        else if (num === '3') { updateData.trendFilter = state; featureName = "Trend Filter"; }
-        else if (num === '4') { updateData.strictMode = state;  featureName = "Strict Mode"; }
-        else if (num === '5') { updateData.partialTp = state;   featureName = "Partial TP Alerts"; }
-        else if (num === '6') {
+        else if (num === '2') { updateData.trailingSl = state;  featureName = "Trailing SL"; }
+        else if (num === '3') { updateData.strictMode = state;  featureName = "Strict Mode"; }
+        else if (num === '4') { updateData.partialTp = state;   featureName = "Partial TP"; }
+        else if (num === '5') {
             const rrrVal = parseFloat(value);
-            if (isNaN(rrrVal) || rrrVal < 1.0 || rrrVal > 5.0) {
-                return await reply(`❌ Min RRR 1.0 - 5.0 අතර විය යුතුය.\nඋදා: ${config.PREFIX}set 6 1.5`);
-            }
-            updateData.minRRR = rrrVal;
-            featureName = `Min RRR → ${rrrVal}x`;
+            if (isNaN(rrrVal) || rrrVal < 1.0 || rrrVal > 5.0) return await reply(`❌ Min RRR 1.0 - 5.0 අතර විය යුතුය.`);
+            updateData.minRRR = rrrVal; featureName = `Min RRR → ${rrrVal}x`;
         }
-        else return await reply('❌ 1-6 අතර අංකයක් භාවිතා කරන්න.');
+        else if (num === '6') { updateData.paperTrade = state; featureName = "Auto Paper Trading"; }
+        else if (num === '7') {
+            const scoreVal = parseInt(value);
+            if (isNaN(scoreVal) || scoreVal < 1 || scoreVal > 14) return await reply(`❌ Score එක 1 - 14 අතර විය යුතුය.`);
+            updateData.paperMinScore = scoreVal; featureName = `Paper Min Score → ${scoreVal}/14`;
+        }
+        else return await reply('❌ 1-7 අතර අංකයක් භාවිතා කරන්න.');
 
         await db.updateSettings(updateData);
-        await reply(`✅ *${featureName}* ${num === '6' ? 'Update' : (state ? 'ON' : 'OFF')} කරන ලදී!`);
+        await reply(`✅ *${featureName}* යාවත්කාලීන කරන ලදී!`);
         await m.react('✅');
     } catch (e) { await reply('❌ Error: ' + e.message); }
 });
