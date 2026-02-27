@@ -20,6 +20,7 @@ async function getTopDownSetups() {
 
             const currentPrice = parseFloat(candles15m[candles15m.length - 1][4]);
             const adxData = indicators.calculateADX(candles15m.slice(-50));
+            const atr = parseFloat(indicators.calculateATR(candles15m.slice(-50)));
 
             const ema50_4h = parseFloat(indicators.calculateEMA(candles4h, 50));
             const trend4H = parseFloat(candles4h[candles4h.length - 1][4]) > ema50_4h ? "UP" : "DOWN";
@@ -35,8 +36,6 @@ async function getTopDownSetups() {
             const macd       = indicators.calculateMACD(candles15m.slice(-50));
             const volBreak   = indicators.checkVolumeBreakout(candles15m.slice(-50));
             const divergence = indicators.checkDivergence(candles15m.slice(-50));
-
-            // ✅ NEW: Harmonic & ICT Scanner Integration
             const harmonicPattern = indicators.checkHarmonicPattern(candles15m.slice(-100));
             const ictSilverBullet = indicators.checkICTSilverBullet(candles15m.slice(-10));
 
@@ -68,25 +67,30 @@ async function getTopDownSetups() {
             if (divergence.includes('Bullish')) { longScore++; longReasons.push("Divergence"); }
             if (divergence.includes('Bearish')) { shortScore++; shortReasons.push("Divergence"); }
             
-            if (macd.includes('Bullish')) { longScore++; longReasons.push("MACD Bull"); }
-            if (macd.includes('Bearish')) { shortScore++; shortReasons.push("MACD Bear"); }
-            
             if (marketSMC.sweep.includes('Bullish') || marketSMC.choch.includes('Bullish')) { longScore++; longReasons.push("Sweep/ChoCH"); }
             if (marketSMC.sweep.includes('Bearish') || marketSMC.choch.includes('Bearish')) { shortScore++; shortReasons.push("Sweep/ChoCH"); }
 
-            // ✅ NEW: Add scores for Harmonic & ICT
             if (harmonicPattern.includes("Bullish")) { longScore++; longReasons.push(harmonicPattern.split(' ')[1] + " 🦇"); }
             if (harmonicPattern.includes("Bearish")) { shortScore++; shortReasons.push(harmonicPattern.split(' ')[1] + " 🦇"); }
             
             if (ictSilverBullet.includes("Bullish")) { longScore++; longReasons.push("ICT Time 🎯"); }
             if (ictSilverBullet.includes("Bearish")) { shortScore++; shortReasons.push("ICT Time 🎯"); }
 
-            // ✅ UPGRADED THRESHOLD: දැන් අවම ලකුණු 5 ක් (14 න්) තිබිය යුතුය
+            // Auto Paper Trade සඳහා Entry/TP/SL සෑදීම
+            let longTP1 = (currentPrice + atr * 2.0).toFixed(4); // TP1 සඳහා
+            let longTP = (currentPrice + atr * 3.0).toFixed(4);
+            let longSL = (currentPrice - atr * 1.5).toFixed(4);
+            
+            let shortTP1 = (currentPrice - atr * 2.0).toFixed(4); // TP1 සඳහා
+            let shortTP = (currentPrice - atr * 3.0).toFixed(4);
+            let shortSL = (currentPrice + atr * 1.5).toFixed(4);
+
+            // අවම ලකුණු 5 කට වඩා වැඩි ඒවා පමණක් ලැයිස්තුවට එකතු කරයි
             if (longScore >= 5) {
-                foundSetups.push({ coin: coin.replace('USDT', ''), type: 'LONG 🟢', rawScore: longScore, score: `${longScore}/14`, price: currentPrice.toFixed(4), adx: adxData.value, entryPoint: ema50_15m.toFixed(4), reasons: longReasons.join(', ') });
+                foundSetups.push({ coin: coin.replace('USDT', ''), type: 'LONG 🟢', rawScore: longScore, score: `${longScore}/14`, price: currentPrice.toFixed(4), tp1: longTP1, tp: longTP, sl: longSL, adx: adxData.value, reasons: longReasons.join(', ') });
             }
             if (shortScore >= 5) {
-                foundSetups.push({ coin: coin.replace('USDT', ''), type: 'SHORT 🔴', rawScore: shortScore, score: `${shortScore}/14`, price: currentPrice.toFixed(4), adx: adxData.value, entryPoint: ema50_15m.toFixed(4), reasons: shortReasons.join(', ') });
+                foundSetups.push({ coin: coin.replace('USDT', ''), type: 'SHORT 🔴', rawScore: shortScore, score: `${shortScore}/14`, price: currentPrice.toFixed(4), tp1: shortTP1, tp: shortTP, sl: shortSL, adx: adxData.value, reasons: shortReasons.join(', ') });
             }
         } catch (err) { }
     }
@@ -108,17 +112,13 @@ cmd({
 },
 async (conn, mek, m, { reply }) => {
     if (activeScannerLoop || activeTradeManager) {
-        return await reply("⚠️ Auto Scanner & Trade Manager දැනටමත් ක්‍රියාත්මකයි!\nනැවැත්වීමට `.scanstop` භාවිතා කරන්න.");
+        return await reply("⚠️ Auto Scanner & Trade Manager දැනටමත් ක්‍රියාත්මකයි!");
     }
 
-    const settings = await db.getSettings();
-    if (!settings.autoSignal) {
-        return await reply("⚠️ *අවවාදයයි:* Bot Settings වල Auto Signals OFF වී ඇත!\nපළමුව `.set 1 on` ලෙස යවා සක්‍රිය කර, නැවත `.scanstart` ලබා දෙන්න.");
-    }
-
-    const targetChat = m.from || mek.from;
+    const ownerJid = m.sender || mek.sender;
     await reply("✅ *AUTO ENGINE STARTED!*\n\nමෙම චැට් එකට සෑම විනාඩි 5කට වරක්ම Top 5 Signals ලැබෙනු ඇත. පළමු ස්කෑන් කිරීම දැන් සිදුවේ... ⏳");
 
+    // ─── TRADE MANAGER (මිනිත්තුවෙන් මිනිත්තුව Trades පරීක්ෂා කිරීම) ───
     activeTradeManager = setInterval(async () => {
         try {
             const currentSettings = await db.getSettings();
@@ -131,42 +131,45 @@ async (conn, mek, m, { reply }) => {
                     const currentPrice = parseFloat(res.data.price);
                     const isLong = trade.direction === 'LONG';
 
-                    // ─── PENDING ORDER CHECK ───
+                    // 1. PENDING ORDER CHECK
                     if (trade.status === 'pending') {
                         let triggered = false;
                         if (isLong && currentPrice <= trade.entry) triggered = true;
                         if (!isLong && currentPrice >= trade.entry) triggered = true;
-
                         if (triggered) {
                             trade.status = 'active';
                             await trade.save();
-                            await conn.sendMessage(trade.userJid, { text: `✅ *ORDER FILLED!* 🔔\n🪙 ${trade.coin} (${trade.direction})\n\nMarket එක ඔබේ Entry Price ($${trade.entry}) වෙත පැමිණ ඇත.\n_දැන් සිට Trade එක Active වන අතර TP/SL Alert ක්‍රියාත්මක වේ!_ 🚀` });
+                            if (!trade.isPaper) await conn.sendMessage(trade.userJid, { text: `✅ *ORDER FILLED!* 🔔\n🪙 ${trade.coin} (${trade.direction})\nMarket එක Entry Price ($${trade.entry}) වෙත පැමිණ ඇත.` });
                         }
                         continue; 
                     }
 
-                    // ─── ACTIVE TRADE CHECKS ───
+                    // ✅ 2. PARTIAL TP CHECK (RESTORED)
                     if (currentSettings.partialTp && trade.tp1 && !trade.tp1Hit) {
                         const tp1Hit = isLong ? currentPrice >= trade.tp1 : currentPrice <= trade.tp1;
                         if (tp1Hit) {
                             trade.tp1Hit = true;
                             await trade.save();
-                            await conn.sendMessage(trade.userJid, { text: `✅ *PARTIAL TP HIT!* 🎯\n🪙 ${trade.coin} (${trade.direction})\nMarket එක TP1 ($${parseFloat(trade.tp1).toFixed(4)}) වෙත පැමිණ ඇත. ලාභයෙන් 50% ක් Close කරන්න!` });
+                            if (!trade.isPaper) await conn.sendMessage(trade.userJid, { text: `✅ *PARTIAL TP HIT!* 🎯\n🪙 ${trade.coin} (${trade.direction})\nMarket එක TP1 ($${parseFloat(trade.tp1).toFixed(4)}) වෙත පැමිණ ඇත. ලාභයෙන් 50% ක් Close කරන්න!` });
                         }
                     }
 
+                    // ✅ 3. TRAILING SL CHECK (RESTORED)
                     if (currentSettings.trailingSl) {
                         const riskAmount = Math.abs(trade.entry - trade.sl);
                         const breakEvenTarget = isLong ? (trade.entry + riskAmount) : (trade.entry - riskAmount);
                         let shouldTrail = false;
+                        
                         if (isLong && currentPrice >= breakEvenTarget && trade.sl < trade.entry) { trade.sl = trade.entry; shouldTrail = true; }
                         else if (!isLong && currentPrice <= breakEvenTarget && trade.sl > trade.entry) { trade.sl = trade.entry; shouldTrail = true; }
+                        
                         if (shouldTrail) {
                             await trade.save();
-                            await conn.sendMessage(trade.userJid, { text: `🛡️ *FAST TRAILING SL ACTIVATED!*\n🪙 ${trade.coin} (${trade.direction})\nMarket එක 1:1 Risk/Reward කලාපයට පැමිණ ඇත.\n✅ Stop Loss අගය Entry ($${parseFloat(trade.entry).toFixed(4)}) වෙත ගෙන එන ලදී.\n_මෙම Trade එක දැන් 100% ක් Risk-Free වේ!_ 🎉` });
+                            if (!trade.isPaper) await conn.sendMessage(trade.userJid, { text: `🛡️ *FAST TRAILING SL ACTIVATED!*\n🪙 ${trade.coin} (${trade.direction})\nStop Loss අගය Entry ($${parseFloat(trade.entry).toFixed(4)}) වෙත ගෙන එන ලදී.\n_මෙම Trade එක දැන් 100% ක් Risk-Free වේ!_ 🎉` });
                         }
                     }
 
+                    // 4. CLOSING LOGIC (TP or SL)
                     let closed = false, result = '', pnlPct = 0;
                     if (isLong) {
                         if (currentPrice >= trade.tp) { closed = true; result = 'WIN'; pnlPct = ((trade.tp - trade.entry)/trade.entry)*100*10; }
@@ -177,15 +180,37 @@ async (conn, mek, m, { reply }) => {
                     }
 
                     if (closed) {
-                        await db.closeTrade(trade._id, result, pnlPct);
-                        const emoji = result === 'WIN' ? '🏆' : result === 'BREAK-EVEN' ? '🛡️' : '💀';
-                        await conn.sendMessage(trade.userJid, { text: `${emoji} *TRADE CLOSED!*\n🪙 ${trade.coin} (${trade.direction})\nප්‍රතිඵලය: *${result}*\nවසන ලද මිල: $${currentPrice.toFixed(4)}\n\n_මෙම දත්ත ඔබගේ .stats වෙත එක් කරන ලදී._` });
+                        let paperProfit = 0;
+                        if (trade.isPaper) {
+                            // PAPER TRADE PNL Calculation
+                            const user = await db.getUser(trade.userJid);
+                            const riskAmountDollars = user.paperBalance * 0.02; // 2% Risk
+                            const slDist = Math.abs(trade.entry - trade.sl);
+                            const qty = riskAmountDollars / slDist; 
+                            
+                            if (result === 'WIN') { paperProfit = qty * Math.abs(trade.entry - trade.tp); } 
+                            else if (result === 'LOSS') { paperProfit = -Math.abs(qty * Math.abs(trade.entry - currentPrice)); }
+                            else if (result === 'BREAK-EVEN') { paperProfit = 0; }
+                            
+                            await db.updatePaperBalance(trade.userJid, paperProfit, result === 'WIN');
+                        }
+
+                        await db.closeTrade(trade._id, result, pnlPct, paperProfit);
+                        
+                        let msg = result === 'WIN' ? '🏆' : result === 'BREAK-EVEN' ? '🛡️' : '💀';
+                        if (trade.isPaper) {
+                            msg = `🤖 *PAPER TRADE CLOSED!*\n🪙 ${trade.coin} (${trade.direction})\nප්‍රතිඵලය: *${result}*\n💰 PnL: ${paperProfit >= 0 ? '+' : ''}$${paperProfit.toFixed(2)}\n_දැන් .paperstats මගින් නව ශේෂය බලන්න._`;
+                        } else {
+                            msg = `${msg} *TRADE CLOSED!*\n🪙 ${trade.coin} (${trade.direction})\nප්‍රතිඵලය: *${result}*\nවසන ලද මිල: $${currentPrice.toFixed(4)}`;
+                        }
+                        await conn.sendMessage(trade.userJid, { text: msg });
                     }
                 } catch(e) {}
             }
         } catch(err) { }
     }, 60000);
 
+    // ─── AUTO SCANNER LOOP ───
     const runAutoScan = async () => {
         try {
             const currentSettings = await db.getSettings();
@@ -193,18 +218,48 @@ async (conn, mek, m, { reply }) => {
 
             let setups = await getTopDownSetups();
             
+            // Auto Paper Trade Execution Logic
+            if (currentSettings.paperTrade && setups.length > 0) {
+                const user = await db.getUser(ownerJid);
+                for (let s of setups) {
+                    if (s.rawScore >= currentSettings.paperMinScore) {
+                        const existingTrade = await db.Trade.findOne({ coin: s.coin + 'USDT', isPaper: true, status: { $in: ['active', 'pending'] } });
+                        
+                        if (!existingTrade) {
+                            const riskAmt = user.paperBalance * 0.02; 
+                            
+                            await db.saveTrade({
+                                userJid: ownerJid,
+                                coin: s.coin + 'USDT',
+                                type: 'future',
+                                direction: s.type.includes('LONG') ? 'LONG' : 'SHORT',
+                                entry: parseFloat(s.price),
+                                tp: parseFloat(s.tp),
+                                tp1: parseFloat(s.tp1),
+                                sl: parseFloat(s.sl),
+                                rrr: "1:2.0",
+                                status: 'active', 
+                                isPaper: true
+                            });
+                            
+                            await conn.sendMessage(ownerJid, { text: `🤖 *AUTO PAPER TRADE EXECUTED!*\n(Score: ${s.score})\n\n🪙 ${s.coin} | ${s.type.includes('LONG') ? 'LONG 🟢' : 'SHORT 🔴'}\n📍 Entry: $${s.price}\n🎯 TP: $${s.tp}\n🛡️ SL: $${s.sl}\n💰 Risk Amount: $${riskAmt.toFixed(2)}\n\n_මෙය ඔබගේ Virtual Balance එක භාවිතා කර ස්වයංක්‍රීයව දමන ලදී._` });
+                        }
+                    }
+                }
+            }
+
             if (setups.length > 0) {
                 let outMsg = `🚀 *14-FACTOR SUPER SNIPER ALERT* 🚀\n_Top 5 Best Market Setups_ \n\n`;
                 setups.forEach((s, i) => {
-                    outMsg += `*${i + 1}. #${s.coin}* - ${s.type} (Score: ${s.score})\n   📍 Price: $${s.price}\n   🔥 ADX Trend: ${s.adx}\n   ✔️ Reasons: ${s.reasons}\n   ⏳ *Recommended:* 15m (Scalp)\n   🤖 AI Check: ${config.PREFIX}future ${s.coin} 15m\n\n`;
+                    outMsg += `*${i + 1}. #${s.coin}* - ${s.type} (Score: ${s.score})\n   📍 Price: $${s.price}\n   🔥 ADX Trend: ${s.adx}\n   ✔️ Reasons: ${s.reasons}\n   🤖 AI Check: ${config.PREFIX}future ${s.coin} 15m\n\n`;
                 });
-                await conn.sendMessage(targetChat, { text: outMsg.trim() });
+                await conn.sendMessage(ownerJid, { text: outMsg.trim() });
             }
         } catch (error) { }
     };
 
     runAutoScan();
-    activeScannerLoop = setInterval(runAutoScan, 5 * 60 * 1000);
+    activeScannerLoop = setInterval(runAutoScan, 5 * 60 * 1000); 
 });
 
 cmd({
@@ -216,19 +271,14 @@ cmd({
     filename: __filename
 },
 async (conn, mek, m, { reply }) => {
-    if (!activeScannerLoop && !activeTradeManager) {
-        return await reply("⚠️ Scanner එක දැනටමත් නවතා ඇත.");
-    }
-    
+    if (!activeScannerLoop && !activeTradeManager) return await reply("⚠️ Scanner එක දැනටමත් නවතා ඇත.");
     if (activeScannerLoop) clearInterval(activeScannerLoop);
     if (activeTradeManager) clearInterval(activeTradeManager);
-    
-    activeScannerLoop = null;
-    activeTradeManager = null;
-    
+    activeScannerLoop = null; activeTradeManager = null;
     await reply("🛑 Auto Scanner සහ Trade Manager සාර්ථකව නවත්වන ලදී.");
 });
 
+// ✅ SUPERSCAN COMMAND (RESTORED)
 cmd({
     pattern: "superscan",
     alias: ["scan", "scanner"],
