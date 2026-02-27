@@ -46,11 +46,11 @@ function parseAnalysisMsg(text) {
     const sl = parseFloat(slMatch[1].replace(/,/g,''));
 
     // TP1
-    const tp1Match = text.match(/TP1[^:$]*\$?([\d,.]+)/i);
+    const tp1Match = text.match(/TP1[^$]*\$([\d,.]+)/i);
     const tp1 = tp1Match ? parseFloat(tp1Match[1].replace(/,/g,'')) : null;
 
     // TP2 (main TP)
-    const tp2Match = text.match(/TP2[^:$]*\$?([\d,.]+)/i);
+    const tp2Match = text.match(/TP2[^$]*\$([\d,.]+)/i);
     const tp = tp2Match ? parseFloat(tp2Match[1].replace(/,/g,'')) : null;
     if (!tp) {
         // fallback to [TARGETS] format
@@ -61,7 +61,7 @@ function parseAnalysisMsg(text) {
     const finalTp = tp || tpFb;
 
     // TP3
-    const tp3Match = text.match(/TP3[^:$]*\$?([\d,.]+)/i);
+    const tp3Match = text.match(/TP3[^$]*\$([\d,.]+)/i);
     const tp3 = tp3Match ? parseFloat(tp3Match[1].replace(/,/g,'')) : null;
 
     // Leverage (from analysis)
