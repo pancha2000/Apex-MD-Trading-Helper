@@ -4,7 +4,7 @@ const axios = require('axios');
 const db = require('../lib/database');
 const binance = require('../lib/binance');
 const analyzer = require('../lib/analyzer'); // ✅ අලුත් මොළය සම්බන්ධ කළා
-const confirmations = require('../lib/confirmations_lib.js');
+const confirmations = require('../lib/confirmations_lib');
 const { checkRRR } = require('../lib/indicators');
 
 cmd({
@@ -99,10 +99,22 @@ JSON only:
                 messages: [{ role: "user", content: prompt }]
             }, { headers: { Authorization: `Bearer ${config.GROQ_API}`, 'Content-Type': 'application/json' } });
             
-            const raw = aiRes.data.choices[0].message.content.replace(/```(?:json)?\n?/g, '');
-            const jm = raw.match(/\{[\s\S]*\}/);
-            if (!jm) throw new Error(`AI JSON error`);
-            const data = JSON.parse(jm[0]);
+            // ─── Robust AI JSON Parser ───
+            const rawContent = aiRes.data.choices[0].message.content;
+            const raw = rawContent.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+            const allMatches = [...raw.matchAll(/\{[\s\S]*?\}/g)];
+            const jm = allMatches.length > 0 ? allMatches[allMatches.length - 1][0] : raw.match(/\{[\s\S]*\}/)?.[0];
+            if (!jm) {
+                console.error('AI raw response:', rawContent.slice(0, 500));
+                throw new Error(`AI JSON parse failed - no JSON found`);
+            }
+            let data;
+            try { data = JSON.parse(jm); }
+            catch (parseErr) {
+                const cleaned = jm.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']').replace(/[\x00-\x1F]/g, ' ');
+                try { data = JSON.parse(cleaned); }
+                catch (e2) { console.error('AI JSON:', jm.slice(0, 300)); throw new Error(`AI JSON parse failed: ${parseErr.message}`); }
+            }
             
             const zoneWarn = aData.bestEntry.warning ? `\n\n${aData.bestEntry.warning}` : "";
             const rrrWarnMsg = !rrrCheck.pass ? `\n\n⚠️ *RRR WARNING:* ${rrrCheck.reason}` : "";
