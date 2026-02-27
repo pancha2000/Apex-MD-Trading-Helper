@@ -4,6 +4,7 @@ const axios = require('axios');
 const db = require('../lib/database');
 const binance = require('../lib/binance');
 const analyzer = require('../lib/analyzer'); // ✅ අලුත් මොළය සම්බන්ධ කළා
+const confirmations = require('../lib/confirmations');
 const { checkRRR } = require('../lib/indicators');
 
 cmd({
@@ -31,8 +32,13 @@ cmd({
             await reply(`⏳ *${coin} Smart Spot Analysis...*`);
             
             // 🧠 1. Analyzer එකෙන් Data ගැනීම (කලින් පේළි ගාණක වැඩේ දැන් එක පේළියයි!)
-            const aData = await analyzer.run14FactorAnalysis(coin, timeframe);
-            const fng = await binance.getFearAndGreed();
+            const [aData, fng, spotSentiment] = await Promise.all([
+                analyzer.run14FactorAnalysis(coin, timeframe),
+                binance.getFearAndGreed(),
+                binance.getMarketSentiment(coin),
+            ]);
+            // 🔬 Entry Confirmations
+            const entryConf = await confirmations.runAllConfirmations(coin, 'LONG', null);
             
             // 🎯 2. Custom Spot TPs (Fibonacci & Resistance මත පදනම්ව)
             const tp1 = parseFloat(aData.marketSMC.resistance).toFixed(4);
@@ -100,7 +106,7 @@ JSON only:
             
             const zoneWarn = aData.bestEntry.warning ? `\n\n${aData.bestEntry.warning}` : "";
             const rrrWarnMsg = !rrrCheck.pass ? `\n\n⚠️ *RRR WARNING:* ${rrrCheck.reason}` : "";
-            const trackMsg = data.direction !== "WAIT" ? `\n📌 Track: .track reply\n[TARGETS|ENTRY:${data.entry}|TP:${data.tp2}|SL:${data.sl}]` : "";
+            const trackMsg = data.direction !== "WAIT" ? `\n📌 Track: .track reply\n[TARGETS|ENTRY:${data.entry}|TP:${data.tp2}|SL:${data.sl}](${coin})` : "";
             
             // 🖨️ 5. Final Output Message
             const out = `
@@ -137,6 +143,8 @@ RRR: ${data.rrr} ${rrrCheck.pass ? '✅' : '⚠️'}
 *📊 Analysis:*
 ${data.trend}
 ${data.smc_summary}${zoneWarn}${rrrWarnMsg}
+
+${entryConf.display}
 
 🖼️ Chart: .chart ${coin} ${timeframe}
 ⚡ _.margin_ මගින් capital set කරන්න.${trackMsg}`;

@@ -5,6 +5,8 @@ const db = require('../lib/database');
 const binance = require('../lib/binance');
 const analyzer = require('../lib/analyzer'); // ✅ අලුත් මොළය සම්බන්ධ කළා
 const { checkRRR } = require('../lib/indicators');
+const confirmations = require('../lib/confirmations');
+const confirmations = require('../lib/confirmations');
 
 cmd({
     pattern: "future",
@@ -33,8 +35,13 @@ async (conn, mek, m, { reply, args }) => {
             binance.getLiquidationData(coin),
             binance.getLiquidityWalls(coin),
             binance.getFundingRate(coin),
-            binance.getMarketSentiment(coin),  // ✅ NEW: Sentiment Layer
+            binance.getMarketSentiment(coin),
         ]);
+
+        // 🔬 8-Factor Advanced Entry Confirmation (parallel, non-blocking)
+        const entryConf = await confirmations.runAllConfirmations(
+            coin, aData.direction, config.LUNAR_API || null
+        );
 
         // ⚙️ 2. Settings & RRR Filter
         const settings = await db.getSettings();
@@ -99,6 +106,12 @@ Coin-specific news hits: ${sentiment.coinNewsHits}
 Latest Headlines: ${headlineStr}
 Overall Market Bias: ${sentiment.overallSentiment}
 Sentiment vs Technical Signal: ${sentimentBoost}
+
+=== ENTRY CONFIRMATION SCORE ===
+Advanced 8-Factor Score: ${entryConf.totalScore >= 0 ? '+' : ''}${entryConf.totalScore} (${entryConf.confirmationStrength})
+Stablecoin Flow: ${entryConf.usdtDom.signal} | OI Change: ${entryConf.oiChange.signal}
+CVD: ${entryConf.cvd.signal} | BTC Correlation: ${entryConf.btcCorr.signal}
+Put/Call Ratio: ${entryConf.pcr.signal} | Netflow: ${entryConf.netflow.signal}
 
 === AI DECISION RULES ===
 1. If sentiment CONFLICTS with tech direction, lower confidence by 20% and warn
@@ -192,6 +205,8 @@ ${sentimentAligned ? '✅' : '⚠️'} Signal vs Market: ${sentimentBoost}
 *💡 Analysis:*
 ${data.trend}
 ${data.smc_summary}${zoneWarn}
+
+${entryConf.display}
 
 🖼️ Chart: .chart ${coin} ${timeframe}${trackMsg}`;
 

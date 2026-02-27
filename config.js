@@ -28,6 +28,9 @@ const config = {
     BINANCE_API: process.env.BINANCE_API || "", // 👈 අලුතින් එකතු කළ Binance Key එක
     GROQ_API: process.env.GROQ_API || "",
     
+    // Optional API Keys
+    LUNAR_API: process.env.LUNAR_API || null,      // Social volume signals
+    
     // Check Owner Function
     isOwner: (sender) => {
         const ownerNum = process.env.OWNER_NUMBER || "";
