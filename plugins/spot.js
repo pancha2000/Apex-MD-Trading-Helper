@@ -99,21 +99,50 @@ JSON only:
                 messages: [{ role: "user", content: prompt }]
             }, { headers: { Authorization: `Bearer ${config.GROQ_API}`, 'Content-Type': 'application/json' } });
             
-            // ─── Robust AI JSON Parser ───
+            // ─── Ultra-Robust AI JSON Parser ───
             const rawContent = aiRes.data.choices[0].message.content;
-            const raw = rawContent.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
-            const allMatches = [...raw.matchAll(/\{[\s\S]*?\}/g)];
-            const jm = allMatches.length > 0 ? allMatches[allMatches.length - 1][0] : raw.match(/\{[\s\S]*\}/)?.[0];
-            if (!jm) {
-                console.error('AI raw response:', rawContent.slice(0, 500));
-                throw new Error(`AI JSON parse failed - no JSON found`);
+            let raw = rawContent.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+            const braceStart = raw.indexOf('{');
+            const braceEnd = raw.lastIndexOf('}');
+            if (braceStart === -1 || braceEnd <= braceStart) {
+                console.error('AI raw (no JSON):', rawContent.slice(0, 400));
+                throw new Error('AI JSON parse failed - no JSON found');
             }
+            let jm = raw.slice(braceStart, braceEnd + 1);
             let data;
-            try { data = JSON.parse(jm); }
-            catch (parseErr) {
-                const cleaned = jm.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']').replace(/[\x00-\x1F]/g, ' ');
-                try { data = JSON.parse(cleaned); }
-                catch (e2) { console.error('AI JSON:', jm.slice(0, 300)); throw new Error(`AI JSON parse failed: ${parseErr.message}`); }
+            try {
+                data = JSON.parse(jm);
+            } catch (e1) {
+                let cleaned = jm
+                    .replace(/([{,]\s*)(\w+)\s*:/g, '$1"$2":')
+                    .replace(/:\s*'([^']*)'/g, ': "$1"')
+                    .replace(/,\s*([}\]])/g, '$1')
+                    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+                    .replace(/\n/g, ' ').replace(/\r/g, '');
+                cleaned = cleaned.replace(/("(?:trend|smc_summary|confidence|direction)"\s*:\s*")(.*?)("(?:\s*[,}]))/gs,
+                    (match, before, val, after) => before + val.replace(/(?<!\\)"/g, '\\"') + after
+                );
+                try {
+                    data = JSON.parse(cleaned);
+                } catch (e2) {
+                    console.error('Spot AI JSON fallback:', jm.slice(0, 300));
+                    const extract = (key) => { const m = jm.match(new RegExp('"' + key + '"\\s*:\\s*"([^"\\n]*)"')); return m ? m[1] : null; };
+                    data = {
+                        direction: extract('direction') || 'BUY',
+                        emoji: extract('emoji') || '🟢',
+                        entry: extract('entry') || aData.entryPrice,
+                        tp1: extract('tp1') || tp1,
+                        tp2: extract('tp2') || tp2,
+                        tp3: extract('tp3') || tp3,
+                        sl: extract('sl') || aData.sl,
+                        rrr: extract('rrr') || ('1:' + rrrStr),
+                        allocation: extract('allocation') || allocText,
+                        riskAmt: extract('riskAmt') || riskText,
+                        confidence: extract('confidence') || '60%',
+                        trend: extract('trend') || 'Analysis unavailable',
+                        smc_summary: extract('smc_summary') || ''
+                    };
+                }
             }
             
             const zoneWarn = aData.bestEntry.warning ? `\n\n${aData.bestEntry.warning}` : "";

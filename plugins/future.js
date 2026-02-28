@@ -130,30 +130,83 @@ Put/Call Ratio: ${entryConf.pcr.signal} | Netflow: ${entryConf.netflow.signal}
 8. ChoCH present = trend reversal confirmed, high confidence
 9. If entryValidation has WARNING = reduce confidence, mention in trend field
 
-STRICT MATH (keep exactly): entry:"${aData.entryPrice}", tp1:"${aData.tp1}", tp2:"${aData.tp2}", sl:"${aData.sl}", rrr:"1:${rrrStr}"
+STRICT OUTPUT RULES:
+- Return ONLY a single JSON object, nothing else
+- NO markdown, NO backticks, NO explanation text before or after
+- All string values: NO newlines, NO unescaped quotes inside strings
+- trend/smc_summary/sentiment_note: write in Sinhala but keep it SHORT (max 80 chars each), NO line breaks
 
-JSON ONLY: {"direction":"${aData.direction} or WAIT","emoji":"🟢 or 🔴 or ⚪","entry":"${aData.entryPrice}","tp1":"${aData.tp1}","tp2":"${aData.tp2}","sl":"${aData.sl}","rrr":"1:${rrrStr}","leverage":"${levText}","margin":"${marginText}","qty":"${qtyText}","risk":"${riskText}","confidence":"XX%","trend":"sinhala 2 lines max","smc_summary":"sinhala 1 line","sentiment_note":"sinhala 1 line on news/sentiment impact on this trade"}`;
+EXACT JSON (copy this structure, fill values):
+{"direction":"${aData.direction}","emoji":"🟢","entry":"${aData.entryPrice}","tp1":"${aData.tp1}","tp2":"${aData.tp2}","sl":"${aData.sl}","rrr":"1:${rrrStr}","leverage":"${levText}","margin":"${marginText}","qty":"${qtyText}","risk":"${riskText}","confidence":"65%","trend":"Bullish trend short description","smc_summary":"SMC summary one line","sentiment_note":"Sentiment impact one line"}`;
         const aiRes = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
             model: "llama-3.3-70b-versatile",
             messages: [{ role: "user", content: prompt }]
         }, { headers: { Authorization: `Bearer ${config.GROQ_API}`, 'Content-Type': 'application/json' } });
 
-        // ─── Robust AI JSON Parser ───
+        // ─── Ultra-Robust AI JSON Parser ───
         const rawContent = aiRes.data.choices[0].message.content;
-        const raw = rawContent.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
-        const allMatches = [...raw.matchAll(/\{[\s\S]*?\}/g)];
-        const jm = allMatches.length > 0 ? allMatches[allMatches.length - 1][0] : raw.match(/\{[\s\S]*\}/)?.[0];
-        if (!jm) {
-            console.error('AI raw response:', rawContent.slice(0, 500));
-            throw new Error(`AI JSON parse failed - no JSON found`);
+
+        // Step 1: Strip markdown fences
+        let raw = rawContent.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+
+        // Step 2: Extract the outermost { ... } block (greedy - gets the full JSON)
+        const braceStart = raw.indexOf('{');
+        const braceEnd = raw.lastIndexOf('}');
+        if (braceStart === -1 || braceEnd === -1 || braceEnd <= braceStart) {
+            console.error('AI raw (no JSON):', rawContent.slice(0, 400));
+            throw new Error('AI JSON parse failed - no JSON found');
         }
+        let jm = raw.slice(braceStart, braceEnd + 1);
+
+        // Step 3: Try direct parse
         let data;
-        try { data = JSON.parse(jm); }
-        catch(parseErr) {
-            // Try to salvage by fixing common AI JSON mistakes
-            const cleaned = jm.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']').replace(/[\x00-\x1F]/g, ' ');
-            try { data = JSON.parse(cleaned); }
-            catch(e2) { console.error('AI JSON:', jm.slice(0,300)); throw new Error(`AI JSON parse failed: ${parseErr.message}`); }
+        try {
+            data = JSON.parse(jm);
+        } catch(e1) {
+            // Step 4: Deep clean - fix common AI JSON mistakes
+            let cleaned = jm
+                .replace(/([{,]\s*)(\w+)\s*:/g, '$1"$2":')          // unquoted keys
+                .replace(/:\s*'([^']*)'/g, ': "$1"')                   // single-quoted values
+                .replace(/,\s*([}\]])/g, '$1')                        // trailing commas
+                .replace(/[\u0000-\u001F\u007F]/g, ' ')              // control chars
+                .replace(/\n/g, ' ').replace(/\r/g, '');              // literal newlines in strings
+
+            // Step 5: Fix broken string values (unescaped quotes inside JSON strings)
+            // Rebuild string values field by field using regex
+            cleaned = cleaned.replace(/("(?:trend|smc_summary|sentiment_note|confidence|direction|emoji)"\s*:\s*")(.*?)("(?:\s*[,}]))/gs,
+                (match, before, val, after) => {
+                    const fixedVal = val.replace(/(?<!\\)"/g, '\\"').replace(/\n/g, ' ');
+                    return before + fixedVal + after;
+                }
+            );
+
+            try {
+                data = JSON.parse(cleaned);
+            } catch(e2) {
+                // Step 6: Last resort — extract individual fields with regex
+                console.error('AI JSON fallback parsing:', jm.slice(0, 300));
+                const extract = (key) => {
+                    const m = jm.match(new RegExp('"' + key + '"\\s*:\\s*"([^"\\n]*)"'));
+                    return m ? m[1] : null;
+                };
+                data = {
+                    direction: extract('direction') || aData.direction,
+                    emoji: extract('emoji') || (aData.direction === 'LONG' ? '🟢' : '🔴'),
+                    entry: extract('entry') || aData.entryPrice,
+                    tp1: extract('tp1') || aData.tp1,
+                    tp2: extract('tp2') || aData.tp2,
+                    sl: extract('sl') || aData.sl,
+                    rrr: extract('rrr') || ('1:' + rrrStr),
+                    leverage: extract('leverage') || levText,
+                    margin: extract('margin') || marginText,
+                    qty: extract('qty') || qtyText,
+                    risk: extract('risk') || riskText,
+                    confidence: extract('confidence') || '60%',
+                    trend: extract('trend') || 'AI analysis unavailable',
+                    smc_summary: extract('smc_summary') || '',
+                    sentiment_note: extract('sentiment_note') || sentiment.tradingBias
+                };
+            }
         }
         const sentimentNote = data.sentiment_note || sentiment.tradingBias;
 
