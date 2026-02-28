@@ -58,23 +58,28 @@ async (conn, mek, m, { reply, args }) => {
             return await reply(`⛔ *TRADE REJECTED - RRR Filter*\n\n🪙 ${coin} | ${aData.direction}\n📍 Entry: $${aData.entryPrice} | TP: $${aData.tp2} | SL: $${aData.sl}\n\n${rrrCheck.reason}\n💡 Setup දුර්වලයි. TP zone වෙනස් වෙනකල් wait කරන්න.`);
         }
 
-        // 💰 3. Position Sizing Calculator
+        // 💰 3. Position Sizing — Binance Risk-Based Formula (matches paper trade exactly)
         const userMargin = await db.getMargin(m.sender) || 0;
-        let levText = "Set .margin", riskText = "Set .margin", marginText = "Set .margin", qtyText = "Set .margin";
+        let levText = "Set .margin first", riskText = "—", marginText = "—", qtyText = "—";
+        let calcLeverage = 10, calcQty = 0, calcMarginUsed = 0, calcRiskAmt = 0;
         
         if (userMargin > 0) {
-            const riskAmt     = userMargin * 0.02; 
-            const deployMgn   = userMargin * 0.10; 
-            const slDistPct   = Math.abs(parseFloat(aData.entryPrice) - parseFloat(aData.sl)) / parseFloat(aData.entryPrice);
-            const slDistPrice = Math.abs(parseFloat(aData.entryPrice) - parseFloat(aData.sl));
-            
-            const coinQty = slDistPrice > 0 ? (riskAmt / slDistPrice) : 0;
-            const qtyFormatted = coinQty < 1 ? coinQty.toFixed(4) : Math.round(coinQty).toString();
+            const entryNum  = parseFloat(aData.entryPrice);
+            const slNum     = parseFloat(aData.sl);
+            const slDist    = Math.abs(entryNum - slNum);
+            const slDistPct = slDist / entryNum;
 
-            riskText   = `$${riskAmt.toFixed(2)}`;
-            marginText = `$${deployMgn.toFixed(2)}`;
-            levText    = `${Math.min(Math.ceil((riskAmt / slDistPct) / deployMgn), 100)}x (Iso)`;
-            qtyText    = `${qtyFormatted} ${coin.replace('USDT','')}`;
+            calcRiskAmt    = userMargin * 0.02;                          // 2% capital risk
+            calcQty        = slDist > 0 ? calcRiskAmt / slDist : 0;     // qty from risk
+            const rawLev   = slDistPct > 0 ? (calcRiskAmt / slDistPct) / (userMargin * 0.10) : 10;
+            calcLeverage   = Math.min(Math.ceil(rawLev), 100);
+            calcMarginUsed = calcQty > 0 ? (calcQty * entryNum) / calcLeverage : 0;
+
+            const qtyFmt = calcQty < 1 ? calcQty.toFixed(4) : Math.round(calcQty).toString();
+            riskText   = `$${calcRiskAmt.toFixed(2)}`;
+            marginText = `$${calcMarginUsed.toFixed(2)}`;
+            levText    = `${calcLeverage}x (Iso)`;
+            qtyText    = `${qtyFmt} ${coin.replace('USDT','')}`;
         }
 
         // ✅ Sentiment Confirmation

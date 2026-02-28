@@ -88,17 +88,15 @@ function parseAnalysisMsg(text) {
     return { coin, direction, entry, sl, tp1, tp: finalTp, tp3, analysisLev, score, timeframe };
 }
 
-// ─── Calculate position sizing (Binance-style) ───────────────────
+// ─── Calculate position sizing (Binance Risk-Based — matches future.js exactly) ─
 function calcPosition(margin, entry, sl, direction, analysisLev) {
-    const riskAmt   = margin * 0.02;           // 2% capital risk rule
     const slDist    = Math.abs(entry - sl);
-    const quantity  = slDist > 0 ? riskAmt / slDist : 0;
-
     const slDistPct = slDist / entry;
-    const rawLev    = slDistPct > 0 ? (riskAmt / slDistPct) / (margin * 0.1) : 10;
+    const riskAmt   = margin * 0.02;                              // 2% capital risk
+    const quantity  = slDist > 0 ? riskAmt / slDist : 0;         // qty from risk/SL
+    const rawLev    = slDistPct > 0 ? (riskAmt / slDistPct) / (margin * 0.10) : 10;
     const leverage  = analysisLev || Math.min(Math.ceil(rawLev), 100);
-    const marginUsed = (quantity * entry) / leverage;
-
+    const marginUsed = quantity > 0 ? (quantity * entry) / leverage : 0;
     return { riskAmt, quantity, leverage, marginUsed, slDist };
 }
 
@@ -197,7 +195,7 @@ cmd({
 ━━━━━━━━━━━━━━━━━━━━━━
 
 🪙 *${coinBase}/USDT* ${dirEmoji} *${direction}*
-📊 Score: ${score}/17 | ⏱️ ${timeframe}
+📊 Score: ${score} | ⏱️ ${timeframe}
 
 *Position Details:*
 📍 Entry:     $${entry}
@@ -381,6 +379,84 @@ ${resEmoji} *PAPER TRADE CLOSED (Manual)*
 
 💼 New Balance: $${user.paperBalance.toFixed(2)}`.trim());
 
+        await m.react('✅');
+    } catch (e) {
+        await reply('❌ Error: ' + e.message);
+    }
+});
+
+
+// ═══════════════════════════════════════════════════════════════
+// CMD 4: .paperhistory — Show closed paper trade history + PnL
+// ═══════════════════════════════════════════════════════════════
+cmd({
+    pattern: 'paperhistory',
+    alias: ['ph', 'phistory', 'paperstats'],
+    desc: 'Closed paper trade history with PnL',
+    category: 'crypto',
+    react: '📜',
+    filename: __filename
+}, async (conn, mek, m, { reply, args }) => {
+    try {
+        await m.react('⏳');
+        const limit = parseInt(args[0]) || 10;
+
+        const trades = await db.Trade.find({
+            userJid: m.sender,
+            isPaper: true,
+            status: 'closed'
+        }).sort({ _id: -1 }).limit(Math.min(limit, 20));
+
+        const user = await db.getUser(m.sender);
+        const startBal = user.paperStartBalance || user.paperBalance || 0;
+
+        if (!trades || trades.length === 0) {
+            return await reply('📜 *Paper Trade History*\n\nClosed trades නෑ.\nFirst trade open කරන්න: *.future BTC 15m* → *.paper*');
+        }
+
+        let wins = 0, losses = 0, breakEvens = 0, totalPnL = 0;
+        let biggestWin = null, biggestLoss = null;
+
+        let msg = `📜 *PAPER TRADE HISTORY (Last ${trades.length})*\n`;
+        msg += `💰 Balance: $${user.paperBalance.toFixed(2)} | Start: $${startBal.toFixed(2)}\n`;
+        const netPnL = user.paperBalance - startBal;
+        msg += `📈 Net: ${netPnL >= 0 ? '+' : ''}$${netPnL.toFixed(2)}\n`;
+        msg += `━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+        trades.forEach((t, i) => {
+            const coinBase = t.coin.replace('USDT', '');
+            const dirEmoji = t.direction === 'LONG' ? '🟢' : '🔴';
+            const resEmoji = t.result === 'WIN' ? '✅' : t.result === 'LOSS' ? '❌' : '➖';
+            const pnl = t.paperProfit || 0;
+            const pnlStr = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
+            const pnlPct = t.marginUsed > 0 ? (pnl / t.marginUsed * 100) : 0;
+
+            totalPnL += pnl;
+            if (t.result === 'WIN') { wins++; if (!biggestWin || pnl > biggestWin.pnl) biggestWin = { coin: coinBase, pnl }; }
+            else if (t.result === 'LOSS') { losses++; if (!biggestLoss || pnl < biggestLoss.pnl) biggestLoss = { coin: coinBase, pnl }; }
+            else breakEvens++;
+
+            const openDate = new Date(t.openTime || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+            msg += `${resEmoji} *${coinBase}* ${dirEmoji} ${t.direction} | ${openDate}\n`;
+            msg += `   📍 $${parseFloat(t.entry).toFixed(4)} → `;
+            msg += `🎯 $${parseFloat(t.tp || 0).toFixed(4)} | 🛡️ $${parseFloat(t.sl || 0).toFixed(4)}\n`;
+            msg += `   💰 PnL: *${pnlStr}* (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%) | ${t.leverage || '?'}x\n\n`;
+        });
+
+        const total = wins + losses + breakEvens;
+        const winRate = total > 0 ? ((wins / total) * 100).toFixed(1) : '0.0';
+        const profitFactor = losses > 0 ? (wins * 3 / (losses * 2)).toFixed(2) : '∞';
+
+        msg += `━━━━━━━━━━━━━━━━━━━━━━\n`;
+        msg += `🏆 *Win Rate: ${winRate}%* (${wins}W / ${losses}L / ${breakEvens}BE)\n`;
+        msg += `📊 Profit Factor: ${profitFactor}\n`;
+        msg += `💰 *Total PnL: ${totalPnL >= 0 ? '+' : ''}$${totalPnL.toFixed(2)}*\n`;
+        if (biggestWin) msg += `🥇 Best: +$${biggestWin.pnl.toFixed(2)} (${biggestWin.coin})\n`;
+        if (biggestLoss) msg += `💀 Worst: $${biggestLoss.pnl.toFixed(2)} (${biggestLoss.coin})\n`;
+        msg += `\n💡 *.ph 20* — last 20 trades`;
+
+        await reply(msg);
         await m.react('✅');
     } catch (e) {
         await reply('❌ Error: ' + e.message);
