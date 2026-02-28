@@ -29,9 +29,17 @@ function parseAnalysisMsg(text) {
     if (!coinMatch) return null;
     const coin = (coinMatch[1]).replace('USDT','') + 'USDT';
 
-    // Direction
-    const isShort = /SHORT|🔴 SHORT|BEARISH/i.test(text);
-    const direction = isShort ? 'SHORT' : 'LONG';
+    // Direction — Smart Entry line එකෙන් විතරක් detect කරනවා (reasons ලිස්ටුවේ "Short OB" වැනි වචන ignore)
+    const smartEntryMatch = text.match(/Smart Entry[^\n]*?(LONG|SHORT)/i)
+        || text.match(/\*?(LONG|SHORT)\*?\s*$|direction[":\s]*(LONG|SHORT)/im);
+    let direction = 'LONG';
+    if (smartEntryMatch) {
+        direction = smartEntryMatch[1].toUpperCase();
+    } else {
+        // Fallback: look for 🔴 SHORT or 🟢 LONG as standalone (not part of reasons)
+        const shortMatch = text.match(/🔴\s*\*?SHORT\*?|\bSHORT\b(?!.*OB|.*Zone|.*term)/);
+        direction = shortMatch ? 'SHORT' : 'LONG';
+    }
 
     // Entry
     const entryMatch = text.match(/Entry[:\s]*\$?([\d,.]+)/i)

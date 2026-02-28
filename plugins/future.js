@@ -189,62 +189,63 @@ JSON ONLY: {"direction":"${aData.direction} or WAIT","emoji":"🟢 or 🔴 or �
 ║ 🎯 *PRO SNIPER ANALYSIS* ║
 ╚═══════════════════════════╝
 ${dangerWarning}
-🪙 ${coin.replace('USDT','')} / USDT  💵 $${aData.priceStr}
-📌 *Market State:* ${aData.marketState}
-⭐ *Score: ${aData.score}/${aData.maxScore}* ✔️ ${aData.reasons}
-📊 *ADX Trend:* ${aData.adxData.status}
-⏱️ ${aData.marketSMC.killzone}${asianWarning}${extraInfo}
+🪙 *${coin.replace('USDT','')} / USDT*  ${data.emoji} *${data.direction}*  💵 $${aData.priceStr}
+📌 *Market:* ${aData.marketState} | *ADX:* ${aData.adxData.status}
+⏱️ ${aData.marketSMC.killzone}${asianWarning}
 
-*🔬 5m MTF Confirmation:*
+━━━━━━━━━━━━━━━━━━
+*🎯 TRADE SETUP*
+━━━━━━━━━━━━━━━━━━
+📍 *Entry:*    $${data.entry}  (${aData.bestEntry.name})
+🎯 *TP1:*      $${data.tp1}  _(${aData.tp1Label})_
+🎯 *TP2:*      $${data.tp2}  _(${aData.tp2Label})_
+🎯 *TP3:*      $${aData.tp3}  _(${aData.tp3Label})_
+🛡️ *SL:*       $${data.sl}  _(${aData.slLabel})_
+⚖️ *RRR:*      ${data.rrr} ${rrrCheck.pass ? '✅' : '⚠️'}
+📋 *Order:*    ${aData.orderSuggestion.type} — ${aData.orderSuggestion.reason}
+🔔 ${aData.confirmation.status}${zoneWarn}
+
+━━━━━━━━━━━━━━━━━━
+*💼 POSITION SIZE*
+━━━━━━━━━━━━━━━━━━
+⚙️ Leverage:  ${data.leverage}
+💰 Margin:    ${data.margin}
+📦 Quantity:  ${data.qty}
+🛡️ Risk:       ${data.risk}
+🔥 Confidence: ${data.confidence}${extraInfo}
+
+━━━━━━━━━━━━━━━━━━
+*📊 TECHNICAL (Score: ${aData.score}/${aData.maxScore})*
+━━━━━━━━━━━━━━━━━━
+✔️ ${aData.reasons}
+
+*MTF Trend:*  4H=${aData.trend4H} | 1H=${aData.trend1H}
+📊 StochRSI:  ${aData.stochRSI.signal} (K:${aData.stochRSI.k})
+📉 Bollinger: ${aData.bbands.signal} | %B: ${aData.bbands.percentB}%${aData.bbands.squeeze ? '\n⚡ *BB SQUEEZE* - Breakout imminent!' : ''}
+📈 MTF RSI:   ${aData.mtfRSI.display}
+📦 Volume:    ${aData.volNodes.display}
+🕯️ Candle:    ${aData.candleConf.display}${aData.mtfOB.confluenceZone ? '\n🔥 *MTF OB:* ' + aData.mtfOB.confluenceZone.display : ''}${aData.liquiditySweep !== 'None' ? '\n💧 *Liq Sweep:* ' + aData.liquiditySweep : ''}${aData.choch !== 'None' ? '\n🔄 *ChoCH:* ' + aData.choch : ''}${aData.entryValidation && aData.entryValidation.warning ? '\n' + aData.entryValidation.warning : ''}
+
+*🔬 5m MTF:*
 ${aData.mtf5m.status}
 
-*📐 Entry Confirmation Suite:*
-📊 StochRSI: ${aData.stochRSI.signal} (K:${aData.stochRSI.k})
-📉 Bollinger: ${aData.bbands.signal} | %B: ${aData.bbands.percentB}%${aData.bbands.squeeze ? '\n⚡ *BB SQUEEZE* - Breakout imminent!' : ''}
-📈 MTF RSI: ${aData.mtfRSI.display}
-🕒 Session: ${aData.session.display}
-📦 Volume: ${aData.volNodes.display}
-🕯️ Candle: ${aData.candleConf.display}${aData.mtfOB.confluenceZone ? '\n🔥 *MTF OB:* ' + aData.mtfOB.confluenceZone.display : ''}${aData.liquiditySweep !== 'None' ? '\n💧 *Liq Sweep:* ' + aData.liquiditySweep : ''}${aData.choch !== 'None' ? '\n🔄 *ChoCH:* ' + aData.choch : ''}${aData.entryValidation && aData.entryValidation.warning ? '\n' + aData.entryValidation.warning : ''}
-
-*🎯 Smart Entry* ${data.emoji} ${data.direction}
-🏹 Zone: ${aData.bestEntry.name}
-📍 Entry: $${data.entry}
-📋 Order: ${aData.orderSuggestion.type}
-   ${aData.orderSuggestion.reason}
-🔔 ${aData.confirmation.status}
-
-🎯 *Take Profits:*
-   ▪️ TP1 (33% - ${aData.tp1Label}): $${data.tp1}
-   ▪️ TP2 (33% - ${aData.tp2Label}): $${data.tp2}
-   ▪️ TP3 (34% - ${aData.tp3Label}): $${aData.tp3}
-🛡️ SL (${aData.slLabel}): $${data.sl}
-
-*⚖️ Risk Management*
-RRR: ${data.rrr} ${rrrCheck.pass ? '✅' : '⚠️'}
-⚙️ Leverage: ${data.leverage}
-💰 Margin:   ${data.margin}
-📦 Quantity: ${data.qty}
-🛡️ Risk:     ${data.risk}
-🔥 Confidence: ${data.confidence}
-
-*🐋 Whale Tracking (Orderbook):*
-🟢 Buy Wall (Support): $${whaleWalls.supportWall} (${whaleWalls.supportVol} USDT)
-🔴 Sell Wall (Resist): $${whaleWalls.resistWall} (${whaleWalls.resistVol} USDT)
-💸 Funding Rate: ${fundingRate}
-
-*🧠 Sentiment Layer:*
-${sentiment.fngEmoji} F&G: ${sentiment.fngValue} (${sentiment.fngLabel})
-₿ BTC.D: ${sentiment.btcDominance}%  📰 News Score: ${sentiment.newsSentimentScore > 0 ? '+' : ''}${sentiment.newsSentimentScore}
-${sentimentAligned ? '✅' : '⚠️'} Signal vs Market: ${sentimentBoost}
+━━━━━━━━━━━━━━━━━━
+*🌊 MARKET CONTEXT*
+━━━━━━━━━━━━━━━━━━
+🐋 Buy Wall:  $${whaleWalls.supportWall} (${whaleWalls.supportVol} USDT)
+🔴 Sell Wall: $${whaleWalls.resistWall} (${whaleWalls.resistVol} USDT)
+💸 Funding:   ${fundingRate}
+${sentiment.fngEmoji} F&G: ${sentiment.fngValue} (${sentiment.fngLabel}) | ₿ BTC.D: ${sentiment.btcDominance}%
+📰 News: ${sentiment.newsSentimentScore > 0 ? '+' : ''}${sentiment.newsSentimentScore} | ${sentimentAligned ? '✅' : '⚠️'} ${sentimentBoost}
 💬 ${sentimentNote}
 
-*💡 Analysis:*
+*💡 AI Analysis:*
 ${data.trend}
-${data.smc_summary}${zoneWarn}
+${data.smc_summary}
 
 ${entryConf.display}
 
-🖼️ Chart: .chart ${coin} ${timeframe}${trackMsg}`;
+🖼️ .chart ${coin} ${timeframe}${trackMsg}`;
 
         await reply(out.trim());
         await m.react('✅');
