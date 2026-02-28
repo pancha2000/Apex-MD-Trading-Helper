@@ -57,16 +57,14 @@ function parseAnalysisMsg(text) {
     const tp1Match = text.match(/TP1[^$]*\$([\d,.]+)/i);
     const tp1 = tp1Match ? parseFloat(tp1Match[1].replace(/,/g,'')) : null;
 
-    // TP2 (main TP)
+    // TP2 (main TP) - with fallback
     const tp2Match = text.match(/TP2[^$]*\$([\d,.]+)/i);
-    const tp = tp2Match ? parseFloat(tp2Match[1].replace(/,/g,'')) : null;
-    if (!tp) {
-        // fallback to [TARGETS] format
+    let finalTp = tp2Match ? parseFloat(tp2Match[1].replace(/,/g,'')) : null;
+    if (!finalTp) {
         const tgMatch = text.match(/\|TP:([\d.]+)/i);
         if (!tgMatch) return null;
-        var tpFb = parseFloat(tgMatch[1]);
+        finalTp = parseFloat(tgMatch[1]);  // ✅ FIXED: var scope bug → let
     }
-    const finalTp = tp || tpFb;
 
     // TP3
     const tp3Match = text.match(/TP3[^$]*\$([\d,.]+)/i);
@@ -85,7 +83,7 @@ function parseAnalysisMsg(text) {
         || text.match(/\b(15m|1h|4h|1d|5m|1w)\b/i);
     const timeframe = tfMatch ? tfMatch[1] : '15m';
 
-    return { coin, direction, entry, sl, tp1, tp: finalTp, tp3, analysisLev, score, timeframe };
+    return { coin, direction, entry, sl, tp1, tp: finalTp, tp3, analysisLev, score, timeframe };  // tp=finalTp
 }
 
 // ─── Calculate position sizing (Binance Risk-Based — safe capped version) ─────
@@ -274,7 +272,7 @@ cmd({
 // ═══════════════════════════════════════════════════════════════
 cmd({
     pattern: 'myptrades',
-    alias: ['pt', 'mypapertrades', 'positions'],
+    alias: ['mypapertrades', 'positions', 'openpositions'],
     desc: 'View open paper trade positions with live P&L',
     category: 'crypto',
     react: '📊',

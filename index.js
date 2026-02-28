@@ -19,7 +19,7 @@ let serialize;
 if (fs.existsSync('./lib/functions.js')) {
     serialize = require('./lib/functions').serialize;
 } else {
-    serialize = require('./lib/function').serialize;
+    serialize = require('./lib/functions').serialize;  // ✅ FIXED: was 'function' (typo)
 }
 
 require('fs').readdirSync('./plugins/').forEach(plugin => {
