@@ -182,6 +182,8 @@ cmd({
             entry, tp, tp1: tp1 || tp, tp2: tp, sl,
             rrr: `1:${rrr}`,
             status: tradeStatus,
+            orderType,
+            fillPrice: tradeStatus === 'active' ? entry : 0,
             isPaper: true,
             leverage, quantity, marginUsed,
             score, timeframe
@@ -283,20 +285,27 @@ cmd({
             const openTime = new Date(t.openTime);
             const hoursOpen = ((Date.now() - openTime) / 3600000).toFixed(1);
 
+            const orderTag = t.orderType === 'LIMIT' ? '⏳ LIMIT' : '⚡ MARKET';
             const statusTag = t.status === 'pending'
-                ? '⏳ *LIMIT ORDER* - Entry Fill බලාසිටී'
-                : '🟢 *ACTIVE*';
+                ? `${orderTag} ORDER - Entry Fill බලාසිටී`
+                : t.status === 'active' && t.orderType === 'LIMIT'
+                    ? `${orderTag} ORDER - ✅ Filled @ $${t.fillPrice ? t.fillPrice.toFixed(4) : t.entry}`
+                    : '🟢 ACTIVE';
+            const tp1Status = t.tp1Hit ? '✅' : '⬜';
+            const tp2Status = t.tp2Hit ? '✅' : '⬜';
+            const dcaStatus = t.dcaLevel > 0 ? ' | ⚠️ DCA Zone Hit' : '';
 
             msg += `*${i+1}. ${coinBase}/USDT* ${dirEmoji} ${t.direction} (${t.leverage || '?'}x)\n`;
-            msg += `${statusTag}\n`;
+            msg += `📋 ${statusTag}${dcaStatus}\n`;
             msg += `📍 Entry: $${t.entry} → 💹 Live: ${livePrice ? '$' + livePrice.toFixed(4) : 'N/A'}\n`;
             if (t.status === 'pending' && livePrice) {
                 const distToEntry = ((Math.abs(livePrice - t.entry) / t.entry) * 100).toFixed(2);
                 const direction_to_entry = (t.direction === 'LONG' && livePrice > t.entry) ? '📉 Price drop' : (t.direction === 'SHORT' && livePrice < t.entry) ? '📈 Price rise' : '📍 Near entry';
-                msg += `⏳ Entry Zone: ${distToEntry}% away (${direction_to_entry} needed)\n`;
+                msg += `⏳ ${distToEntry}% away (${direction_to_entry} needed)\n`;
             }
-            msg += `${pnlEmoji} *Unrealized PnL: ${t.status === 'pending' ? '⏳ Pending...' : pnlStr}*\n`;
-            msg += `🎯 TP: $${t.tp} (${distToTP}% away) | 🛡️ SL: $${t.sl} (${distToSL}% away)\n`;
+            msg += `${pnlEmoji} *PnL: ${t.status === 'pending' ? '⏳ Pending fill...' : pnlStr}*\n`;
+            msg += `🎯 TP1 ${tp1Status} $${parseFloat(t.tp1||t.tp).toFixed(4)} | TP2 ${tp2Status} $${parseFloat(t.tp2||t.tp).toFixed(4)}\n`;
+            msg += `🎯 TP3: $${parseFloat(t.tp).toFixed(4)} (${distToTP}% away) | 🛡️ SL: $${parseFloat(t.sl).toFixed(4)} (${distToSL}% away)\n`;
             msg += `💰 Margin: $${(t.marginUsed||0).toFixed(2)} | 📦 Qty: ${(t.quantity||0).toFixed(4)} ${coinBase}\n`;
             msg += `⏱️ Open ${hoursOpen}h | 🆔 ${t._id.toString().slice(-6)}\n\n`;
         });

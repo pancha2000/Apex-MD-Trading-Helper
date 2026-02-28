@@ -104,8 +104,41 @@ function startTradeManager(conn) {
                         if (tp1Hit) {
                             trade.tp1Hit = true;
                             await trade.save();
+                            const coinBase = trade.coin.replace('USDT','');
+                            const tp1Pnl = trade.quantity ? ((Math.abs(parseFloat(trade.tp1) - trade.entry) * trade.quantity) / 2).toFixed(2) : '?';
                             await conn.sendMessage(trade.userJid, {
-                                text: `✅ *PARTIAL TP HIT!* 🎯\n🪙 ${trade.coin} (${trade.direction})\nTP1 ($${parseFloat(trade.tp1).toFixed(4)}) Hit!\nලාභයෙන් 50% ක් Close කරන්න!`
+                                text: `🎯 *TP1 HIT!* 💰\n━━━━━━━━━━━━━━━━\n🪙 *${coinBase}/USDT* ${isLong ? '🟢 LONG' : '🔴 SHORT'}\n\n✅ TP1: $${parseFloat(trade.tp1).toFixed(4)} Hit!\n💰 Partial PnL: ~$${tp1Pnl}\n\n*දැන් කරන්න:*\n• Position ෙන් 33% Close කරන්න\n• SL → Entry ට Move කරන්න (Risk Free)\n• TP2: $${parseFloat(trade.tp2 || trade.tp).toFixed(4)} Target රෙදි`
+                            });
+                        }
+                    }
+
+                    // TP2 ALERT (trade still open, TP2 zone approached)
+                    if (trade.tp1Hit && !trade.tp2Hit && trade.tp2) {
+                        const tp2 = parseFloat(trade.tp2);
+                        const nearTp2 = isLong ? currentPrice >= tp2 * 0.995 : currentPrice <= tp2 * 1.005;
+                        if (nearTp2) {
+                            trade.tp2Hit = true;
+                            await trade.save();
+                            const coinBase = trade.coin.replace('USDT','');
+                            await conn.sendMessage(trade.userJid, {
+                                text: `🎯 *TP2 ZONE!* 🔥\n━━━━━━━━━━━━━━━━\n🪙 *${coinBase}/USDT* ${isLong ? '🟢 LONG' : '🔴 SHORT'}\n\n🔥 TP2: $${tp2.toFixed(4)} Zone ලඟා!\n\n*දැන් කරන්න:*\n• Position ෙන් 33% Close කරන්න\n• Remaining 34% → TP3 Target\n• TP3: $${parseFloat(trade.tp || 0).toFixed(4)}`
+                            });
+                        }
+                    }
+
+                    // DCA ALERT (price moves against trade by 1x risk)
+                    if (!trade.dcaLevel && trade.dcaLevel === 0) {
+                        const risk = Math.abs(trade.entry - trade.sl);
+                        const dcaZone = isLong ? trade.entry - risk * 0.7 : trade.entry + risk * 0.7;
+                        const atDca = isLong ? currentPrice <= dcaZone && currentPrice > trade.sl : currentPrice >= dcaZone && currentPrice < trade.sl;
+                        if (atDca) {
+                            trade.dcaLevel = 1;
+                            await trade.save();
+                            const coinBase = trade.coin.replace('USDT','');
+                            const dcaEntry = currentPrice.toFixed(4);
+                            const avgEntry = isLong ? ((trade.entry + currentPrice) / 2).toFixed(4) : ((trade.entry + currentPrice) / 2).toFixed(4);
+                            await conn.sendMessage(trade.userJid, {
+                                text: `⚠️ *DCA ZONE!* 📉\n━━━━━━━━━━━━━━━━\n🪙 *${coinBase}/USDT* ${isLong ? '🟢 LONG' : '🔴 SHORT'}\n\n📍 Original Entry: $${trade.entry}\n📉 DCA Price: ~$${dcaEntry}\n📊 Avg Entry (if DCA): ~$${avgEntry}\n\n*DCA option:*\n• Same margin ($${(trade.marginUsed || 2).toFixed(2)}) add කරන්න\n• SL: $${parseFloat(trade.sl).toFixed(4)} (unchanged)\n\n⚠️ _SL hit වෙන්නෙ නැතිව DCA දාන්න!_`
                             });
                         }
                     }
@@ -138,10 +171,22 @@ function startTradeManager(conn) {
                     }
 
                     if (closed) {
-                        await db.closeTrade(trade._id, result, pnlPct, 0);
+                        const coinBase = trade.coin.replace('USDT','');
+                        let paperProfit = 0;
+                        if (trade.isPaper && trade.quantity) {
+                            const priceDiff = isLong ? currentPrice - trade.entry : trade.entry - currentPrice;
+                            paperProfit = priceDiff * trade.quantity;
+                        }
+                        await db.closeTrade(trade._id, result, pnlPct, paperProfit);
+                        if (trade.isPaper && paperProfit !== 0) {
+                            await db.updatePaperBalance(trade.userJid, paperProfit, result === 'WIN', result === 'BREAK-EVEN');
+                        }
                         const emoji = result === 'WIN' ? '🏆' : result === 'BREAK-EVEN' ? '🛡️' : '💀';
+                        const profitStr = trade.isPaper && trade.quantity
+                            ? `\n💰 PnL: ${paperProfit >= 0 ? '+' : ''}$${paperProfit.toFixed(2)}`
+                            : '';
                         await conn.sendMessage(trade.userJid, {
-                            text: `${emoji} *TRADE CLOSED!*\n🪙 ${trade.coin} (${trade.direction})\nප්‍රතිඵලය: *${result}*\nවසන ලද මිල: $${currentPrice.toFixed(4)}`
+                            text: `${emoji} *${trade.isPaper ? 'PAPER ' : ''}TRADE CLOSED!*\n━━━━━━━━━━━━━━━━\n🪙 *${coinBase}/USDT* ${isLong ? '🟢 LONG' : '🔴 SHORT'}\n\nප්‍රතිඵලය: *${result}*\n💹 Close Price: $${currentPrice.toFixed(4)}${profitStr}\n📍 Entry was: $${parseFloat(trade.entry).toFixed(4)}`
                         });
                     }
                 } catch (e) { }
