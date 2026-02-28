@@ -197,15 +197,6 @@ EXACT JSON (copy this structure, fill values):
                 data = {
                     direction: extract('direction') || aData.direction,
                     emoji: extract('emoji') || (aData.direction === 'LONG' ? '🟢' : '🔴'),
-                    entry: extract('entry') || aData.entryPrice,
-                    tp1: extract('tp1') || aData.tp1,
-                    tp2: extract('tp2') || aData.tp2,
-                    sl: extract('sl') || aData.sl,
-                    rrr: extract('rrr') || ('1:' + rrrStr),
-                    leverage: extract('leverage') || levText,
-                    margin: extract('margin') || marginText,
-                    qty: extract('qty') || qtyText,
-                    risk: extract('risk') || riskText,
                     confidence: extract('confidence') || '60%',
                     trend: extract('trend') || 'AI analysis unavailable',
                     smc_summary: extract('smc_summary') || '',
@@ -214,6 +205,17 @@ EXACT JSON (copy this structure, fill values):
             }
         }
         const sentimentNote = data.sentiment_note || sentiment.tradingBias;
+
+        // ✅ FIX: Always use analyzer values for trade params — AI only provides direction/confidence/text
+        data.entry     = aData.entryPrice;
+        data.tp1       = aData.tp1;
+        data.tp2       = aData.tp2;
+        data.sl        = aData.sl;
+        data.rrr       = `1:${rrrStr}`;
+        data.leverage  = levText;
+        data.margin    = marginText;
+        data.qty       = qtyText;
+        data.risk      = riskText;
 
         // 🕸️ 5. Grid Generation
         let gridStr = "";
@@ -231,11 +233,14 @@ EXACT JSON (copy this structure, fill values):
 
         const zoneWarn = aData.bestEntry.warning ? `\n\n${aData.bestEntry.warning}` : "";
         const trackMsg = data.direction !== "WAIT" && !aData.isTrueChoppy ? `\n📌 Track: .track reply\n[TARGETS|ENTRY:${data.entry}|TP:${data.tp2}|SL:${data.sl}]` : "";
-        const sessionWarn = aData.session.quality === 'AVOID' 
-            ? "\n🔴 *OFF-HOURS* - Very low volume. Avoid new entries."
-            : aData.session.quality === 'CAUTION'
-                ? "\n⚠️ *ASIAN SESSION* - Low volume, fakeout risk. Wait for London (08:00 UTC)."
-                : "";
+        // ✅ FIX: Only show warning if killzone is ALSO not London/NY (avoid contradiction)
+        const killzoneIsActive = aData.marketSMC.killzone.includes('London') || aData.marketSMC.killzone.includes('New York');
+        const sessionWarn = killzoneIsActive ? "" :
+            aData.session.quality === 'AVOID' 
+                ? "\n🔴 *OFF-HOURS* - Very low volume. Avoid new entries."
+                : aData.session.quality === 'CAUTION'
+                    ? "\n⚠️ *ASIAN SESSION* - Low volume, fakeout risk. Wait for London open."
+                    : "";
         const asianWarning = sessionWarn;
         
         let dangerWarning = "";
@@ -282,7 +287,7 @@ ${dangerWarning}
 📉 Bollinger: ${aData.bbands.signal} | %B: ${aData.bbands.percentB}%${aData.bbands.squeeze ? '\n⚡ *BB SQUEEZE* - Breakout imminent!' : ''}
 📈 MTF RSI:   ${aData.mtfRSI.display}
 📦 Volume:    ${aData.volNodes.display}
-🕯️ Candle:    ${aData.candleConf.display}${aData.mtfOB.confluenceZone ? '\n🔥 *MTF OB:* ' + aData.mtfOB.confluenceZone.display : ''}${aData.liquiditySweep !== 'None' ? '\n💧 *Liq Sweep:* ' + aData.liquiditySweep : ''}${aData.choch !== 'None' ? '\n🔄 *ChoCH:* ' + aData.choch : ''}${aData.entryValidation && aData.entryValidation.warning ? '\n' + aData.entryValidation.warning : ''}
+🕯️ Candle:    ${aData.candleConf.display}${aData.mtfOB.confluenceZone ? '\n🔥 *MTF OB:* ' + aData.mtfOB.confluenceZone.display : ''}${aData.liquiditySweep !== 'None' ? '\n💧 *Liq Sweep:* ' + aData.liquiditySweep : ''}${aData.choch !== 'None' ? '\n🔄 *ChoCH:* ' + aData.choch : ''}${aData.entryValidation && aData.entryValidation.warning ? '\n' + aData.entryValidation.warning.replace(/\(\$[\d.]+\)/g, m => '($' + parseFloat(m.slice(2,-1)).toFixed(4) + ')') : ''}
 
 *🔬 5m MTF:*
 ${aData.mtf5m.status}
