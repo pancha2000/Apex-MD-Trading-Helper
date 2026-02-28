@@ -88,16 +88,35 @@ function parseAnalysisMsg(text) {
     return { coin, direction, entry, sl, tp1, tp: finalTp, tp3, analysisLev, score, timeframe };
 }
 
-// ─── Calculate position sizing (Binance Risk-Based — matches future.js exactly) ─
-function calcPosition(margin, entry, sl, direction, analysisLev) {
+// ─── Calculate position sizing (Binance Risk-Based — safe capped version) ─────
+function calcPosition(margin, entry, sl, direction, analysisLev, freeBalance = null) {
+    const available = freeBalance !== null ? freeBalance : margin;
     const slDist    = Math.abs(entry - sl);
     const slDistPct = slDist / entry;
-    const riskAmt   = margin * 0.02;                              // 2% capital risk
-    const quantity  = slDist > 0 ? riskAmt / slDist : 0;         // qty from risk/SL
+
+    // 2% risk on TOTAL capital (risk amount stays fixed)
+    const riskAmt   = margin * 0.02;
+    let quantity    = slDist > 0 ? riskAmt / slDist : 0;
+
     const rawLev    = slDistPct > 0 ? (riskAmt / slDistPct) / (margin * 0.10) : 10;
     const leverage  = analysisLev || Math.min(Math.ceil(rawLev), 100);
-    const marginUsed = quantity > 0 ? (quantity * entry) / leverage : 0;
-    return { riskAmt, quantity, leverage, marginUsed, slDist };
+    let marginUsed  = quantity > 0 ? (quantity * entry) / leverage : 0;
+
+    // ✅ CRITICAL: Cap marginUsed to 20% of available balance (safety rule)
+    const maxMargin = available * 0.20;
+    if (marginUsed > maxMargin && maxMargin > 0) {
+        const scaleFactor = maxMargin / marginUsed;
+        quantity   *= scaleFactor;
+        marginUsed  = maxMargin;
+    }
+
+    // ✅ Minimum viable trade check
+    const minMargin = 0.50; // $0.50 minimum
+    if (marginUsed < minMargin) {
+        return { riskAmt: 0, quantity: 0, leverage, marginUsed: 0, slDist, tooSmall: true };
+    }
+
+    return { riskAmt, quantity, leverage, marginUsed, slDist, tooSmall: false };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -124,6 +143,12 @@ cmd({
 
         const { coin, direction, entry, sl, tp1, tp, tp3, analysisLev, score, timeframe } = parsed;
 
+        // Stablecoin guard
+        const STABLES = ['USDCUSDT','BUSDUSDT','DAIUSDT','TUSDUSDT','USDPUSDT','FRAXUSDT'];
+        if (STABLES.includes(coin)) {
+            return await reply(`❌ *${coin.replace('USDT','')} Stablecoin!*\nStablecoins paper trade කරන්න බෑ.`);
+        }
+
         if (!tp) return await reply('❌ TP price detect නොවිණ. .future/.spot analysis message reply කරන්න.');
 
         // Margin check
@@ -134,10 +159,7 @@ cmd({
 
         // Check if already have active paper trade for this coin
         const existing = await db.Trade.findOne({
-            userJid: m.sender,
-            coin,
-            isPaper: true,
-            status: { $in: ['active', 'pending'] }
+            userJid: m.sender, coin, isPaper: true, status: { $in: ['active', 'pending'] }
         });
         if (existing) {
             return await reply(`⚠️ *${coin} Paper Trade දැනටමත් Open!*\n\nEntry: $${existing.entry} | ${existing.direction}\n\n*.myptrades* ලෙස current positions බලන්න.`);
@@ -151,9 +173,34 @@ cmd({
             return await reply('⚠️ Maximum 5 paper trades open කරන්න පුළුවන්.\n.myptrades ලෙස close/view කරන්න.');
         }
 
-        const { riskAmt, quantity, leverage, marginUsed } = calcPosition(
-            userMargin, entry, sl, direction, analysisLev
+        // ✅ Calculate free (available) balance = total - locked in open trades
+        const user = await db.getUser(m.sender);
+        const openTrades = await db.Trade.find({ userJid: m.sender, isPaper: true, status: { $in: ['active','pending'] } });
+        const lockedMargin = openTrades.reduce((s, t) => s + (t.marginUsed || 0), 0);
+        const freeBalance = Math.max(0, (user.paperBalance || userMargin) - lockedMargin);
+
+        if (freeBalance < 1.0) {
+            return await reply(
+                `❌ *Insufficient Balance!*\n\n` +
+                `💰 Total: $${(user.paperBalance || userMargin).toFixed(2)}\n` +
+                `🔒 Locked: $${lockedMargin.toFixed(2)} (${openCount} trades)\n` +
+                `💵 Free: $${freeBalance.toFixed(2)}\n\n` +
+                `⚠️ Free balance ඉතා අඩුයි. Open trades close කරලා retry කරන්න.`
+            );
+        }
+
+        const { riskAmt, quantity, leverage, marginUsed, tooSmall } = calcPosition(
+            userMargin, entry, sl, direction, analysisLev, freeBalance
         );
+
+        if (tooSmall) {
+            return await reply(
+                `❌ *Position Too Small!*\n\n` +
+                `SL distance ඉතා කුඩාය ($${Math.abs(entry-sl).toFixed(6)}).\n` +
+                `Minimum $0.50 margin deploy කරන්නට SL distance ප්‍රමාණවත් නැහැ.\n\n` +
+                `💡 Wider SL zone ඇති setup එකක් trade කරන්න.`
+            );
+        }
 
         // Get live price
         const livePrice = await getLivePrice(coin);

@@ -24,6 +24,12 @@ async (conn, mek, m, { reply, args }) => {
         if (!coin.endsWith('USDT')) coin += 'USDT';
         let timeframe = args[1] ? args[1].toLowerCase() : '15m';
 
+        // ✅ Stablecoin filter — no trading on pegged assets
+        const STABLECOINS = ['USDCUSDT','BUSDUSDT','DAIUSDT','TUSDUSDT','USDPUSDT','FRAXUSDT','LUSDUSDT','USTCUSDT','EURUSDT','GBPUSDT'];
+        if (STABLECOINS.includes(coin)) {
+            return await reply(`❌ *${coin.replace('USDT','')} Stablecoin!*\n\nStablecoins trade කරන්න බෑ — price $1 ලඟ peg වෙලා.\nReal crypto coin ලබා දෙන්න (BTC, ETH, SOL, ...)`);
+        }
+
         await m.react('⏳');
         await reply(`⏳ *${coin} Full 14-Factor Analysis...*\n(MTF + Whale Walls + Harmonic + True Choppy Detection ⚙️)`);
 
@@ -58,28 +64,48 @@ async (conn, mek, m, { reply, args }) => {
             return await reply(`⛔ *TRADE REJECTED - RRR Filter*\n\n🪙 ${coin} | ${aData.direction}\n📍 Entry: $${aData.entryPrice} | TP: $${aData.tp2} | SL: $${aData.sl}\n\n${rrrCheck.reason}\n💡 Setup දුර්වලයි. TP zone වෙනස් වෙනකල් wait කරන්න.`);
         }
 
-        // 💰 3. Position Sizing — Binance Risk-Based Formula (matches paper trade exactly)
+        // 💰 3. Position Sizing — Binance Risk-Based Formula
         const userMargin = await db.getMargin(m.sender) || 0;
         let levText = "Set .margin first", riskText = "—", marginText = "—", qtyText = "—";
         let calcLeverage = 10, calcQty = 0, calcMarginUsed = 0, calcRiskAmt = 0;
-        
+        let marginWarning = "";
+
         if (userMargin > 0) {
             const entryNum  = parseFloat(aData.entryPrice);
             const slNum     = parseFloat(aData.sl);
             const slDist    = Math.abs(entryNum - slNum);
             const slDistPct = slDist / entryNum;
 
-            calcRiskAmt    = userMargin * 0.02;                          // 2% capital risk
-            calcQty        = slDist > 0 ? calcRiskAmt / slDist : 0;     // qty from risk
+            calcRiskAmt    = userMargin * 0.02;
+            calcQty        = slDist > 0 ? calcRiskAmt / slDist : 0;
             const rawLev   = slDistPct > 0 ? (calcRiskAmt / slDistPct) / (userMargin * 0.10) : 10;
             calcLeverage   = Math.min(Math.ceil(rawLev), 100);
             calcMarginUsed = calcQty > 0 ? (calcQty * entryNum) / calcLeverage : 0;
 
-            const qtyFmt = calcQty < 1 ? calcQty.toFixed(4) : Math.round(calcQty).toString();
-            riskText   = `$${calcRiskAmt.toFixed(2)}`;
-            marginText = `$${calcMarginUsed.toFixed(2)}`;
-            levText    = `${calcLeverage}x (Iso)`;
-            qtyText    = `${qtyFmt} ${coin.replace('USDT','')}`;
+            // Cap marginUsed to 20% of capital per trade (5 slots max)
+            const maxMarginPerTrade = userMargin * 0.20;
+            if (calcMarginUsed > maxMarginPerTrade) {
+                const scale    = maxMarginPerTrade / calcMarginUsed;
+                calcQty       *= scale;
+                calcMarginUsed = maxMarginPerTrade;
+                calcRiskAmt    = slDist * calcQty;
+                marginWarning  = "\n⚠️ *Position capped to 20% of capital* (SL ඉතා ළඟ - " + (slDistPct*100).toFixed(3) + "%)";
+            }
+
+            if (calcMarginUsed > userMargin) {
+                marginWarning = "\n❌ *Margin Insufficient!* Balance: $" + userMargin.toFixed(2) + " | Needed: $" + calcMarginUsed.toFixed(2);
+                calcQty = 0; calcMarginUsed = 0;
+            }
+
+            if (calcQty > 0) {
+                const qtyFmt = calcQty < 1 ? calcQty.toFixed(4) : Math.round(calcQty).toString();
+                riskText   = "$" + calcRiskAmt.toFixed(2);
+                marginText = "$" + calcMarginUsed.toFixed(2);
+                levText    = calcLeverage + "x (Iso)";
+                qtyText    = qtyFmt + " " + coin.replace('USDT','');
+            } else {
+                qtyText = "Insufficient balance";
+            }
         }
 
         // ✅ Sentiment Confirmation
@@ -272,7 +298,7 @@ ${dangerWarning}
 *💼 POSITION SIZE*
 ━━━━━━━━━━━━━━━━━━
 ⚙️ Leverage:  ${data.leverage}
-💰 Margin:    ${data.margin}
+💰 Margin:    ${data.margin}${marginWarning}
 📦 Quantity:  ${data.qty}
 🛡️ Risk:       ${data.risk}
 🔥 Confidence: ${data.confidence}${extraInfo}
