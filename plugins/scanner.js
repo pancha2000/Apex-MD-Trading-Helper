@@ -31,7 +31,7 @@ async function getTopDownSetups() {
             await new Promise(resolve => setTimeout(resolve, 200));
             const aData = await analyzer.run14FactorAnalysis(coin, '15m');
 
-            if (aData.score >= 7) {
+            if (aData.score >= 10) {  // 10/30 = 33% confluence minimum
                 const sent = await getSentimentCached();
                 const sentBias = parseFloat(sent.totalBias) || 0;
                 const sentBonus =
@@ -45,7 +45,7 @@ async function getTopDownSetups() {
                     coin: coin.replace('USDT', ''),
                     type: aData.direction === 'LONG' ? 'LONG 🟢' : 'SHORT 🔴',
                     rawScore: adjustedScore,
-                    score: `${adjustedScore}/26`,
+                    score: `${adjustedScore}/30`,
                     price: aData.priceStr,
                     tp1: aData.tp1,
                     tp: aData.tp2,
@@ -54,6 +54,8 @@ async function getTopDownSetups() {
                     reasons: aData.reasons,
                     liquiditySweep: aData.liquiditySweep || 'None',
                     choch: aData.choch || 'None',
+                    supertrend: aData.supertrend ? aData.supertrend.display : '',
+                    rvol: aData.rvol ? aData.rvol.rvol : '?',
                     sentEmoji: sentBonus > 0 ? '📰✅' : sentBonus < 0 ? '📰⚠️' : ''
                 });
             }
@@ -310,7 +312,7 @@ function startSignalScanner(conn, ownerJid) {
             let msg = `🚀 *14-FACTOR AUTO SIGNAL ALERT* 🚀\n_Top ${setups.length} Best Setups Now_\n\n`;
             msg += `🧠 *Market:* ${sent.overallSentiment} | ${sent.fngEmoji} F&G: ${sent.fngValue}\n\n`;
             setups.forEach((s, i) => {
-                msg += `*${i + 1}. #${s.coin}* - ${s.type} (Score: ${s.score} ⭐) ${s.sentEmoji || ''}\n   📍 $${s.price} | ADX: ${s.adx}\n   ✔️ ${s.reasons}\n   🤖 .future ${s.coin} 15m\n\n`;
+                msg += `*${i + 1}. #${s.coin}* - ${s.type} (Score: ${s.score} ⭐) ${s.sentEmoji || ''}\n   📍 $${s.price} | ADX: ${s.adx} | RVOL: ${s.rvol || '?'}x\n   ⚡ ${s.supertrend || ''}\n   ✔️ ${s.reasons}\n   🤖 .future ${s.coin} 15m\n\n`;
             });
             msg += `_⏱️ ඊළඟ Scan - 5min | .set 1 off ගසා Stop කරන්න_`;
 

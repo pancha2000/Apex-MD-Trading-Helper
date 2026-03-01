@@ -56,7 +56,7 @@ async (conn, mek, m, { reply, args }) => {
         const rrrVal = riskAmount > 0 ? (Math.abs(parseFloat(aData.tp2) - parseFloat(aData.entryPrice)) / riskAmount) : 0;
         const rrrStr = rrrVal.toFixed(2);
 
-        if (settings.strictMode && aData.score < 5 && !aData.isTrueChoppy) {
+        if (settings.strictMode && aData.score < 8 && !aData.isTrueChoppy) {  // 8/27 = ~30% min threshold
             return await reply(`⛔ *TRADE REJECTED - Strict Mode* ⛔\n🪙 ${coin} | ${aData.direction}\n⭐ Score: ${aData.score}/${aData.maxScore}\n❌ *හේතුව:* Confluence Score එක ඉතා අඩුයි.`);
         }
 
@@ -132,6 +132,9 @@ MTF RSI: ${aData.mtfRSI.signal} | Volume Node: ${aData.volNodes.nearHVN ? 'At HV
 Session: ${aData.session.quality} (${aData.session.session}) | Candle Close: ${aData.candleConf.confirmed ? 'CONFIRMED' : 'Pending'}
 EMA Ribbon: ${aData.emaRibbon ? aData.emaRibbon.signal : 'N/A'} | Key S/R: ${aData.keyLevels.display}
 Nearest FVG target: ${aData.fvgData.nearest ? '$' + aData.fvgData.nearest.mid + ' ' + aData.fvgData.nearest.direction : 'None'}
+Supertrend: ${aData.supertrend.signal} (${aData.supertrend.supertrendLevel}) ${aData.supertrend.justFlipUp ? '⚡FLIP UP' : aData.supertrend.justFlipDown ? '⚡FLIP DOWN' : ''}
+RVOL: ${aData.rvol.rvol}x (${aData.rvol.signal}) — ${aData.rvol.isTrustworthy ? 'Volume confirms move' : 'Low volume - wait'}
+MTF MACD: ${aData.mtfMACD.signal}
 Liquidity Sweep: ${aData.liquiditySweep} | ChoCH: ${aData.choch}
 Short-Term OBs: Bull=${ aData.mtfOBsExtra.bullish ? aData.mtfOBsExtra.bullish.bottom+'-'+aData.mtfOBsExtra.bullish.top : 'None'} | Bear=${aData.mtfOBsExtra.bearish ? aData.mtfOBsExtra.bearish.bottom+'-'+aData.mtfOBsExtra.bearish.top : 'None'}
 Entry Validation: ${aData.entryValidation.warning || 'Entry OK ✅'}
@@ -318,6 +321,9 @@ ${dangerWarning}
 🕯️ Candle:    ${aData.candleConf.display}${aData.mtfOB.confluenceZone ? '\n🔥 *MTF OB:* ' + aData.mtfOB.confluenceZone.display : ''}${aData.liquiditySweep !== 'None' ? '\n💧 *Liq Sweep:* ' + aData.liquiditySweep : ''}${aData.choch !== 'None' ? '\n🔄 *ChoCH:* ' + aData.choch : ''}${aData.entryValidation && aData.entryValidation.warning ? '\n' + aData.entryValidation.warning.replace(/\(\$[\d.]+\)/g, m => '($' + parseFloat(m.slice(2,-1)).toFixed(4) + ')') : ''}
 ${aData.emaRibbon ? '📊 *EMA Ribbon:* ' + aData.emaRibbon.display : ''}
 📍 *Key S/R:* ${aData.keyLevels.display}${aData.fvgData.nearest ? '\n🎯 *Nearest FVG:* $' + aData.fvgData.nearest.mid + ' (' + aData.fvgData.nearest.direction + ')' : ''}
+⚡ *Supertrend:* ${aData.supertrend.display}
+📊 *RVOL:* ${aData.rvol.display}
+📈 *MTF MACD:* ${aData.mtfMACD.display}
 
 *🔬 5m MTF:*
 ${aData.mtf5m.status}

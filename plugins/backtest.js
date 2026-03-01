@@ -3,7 +3,7 @@ const config = require('../config');
 const binance = require('../lib/binance');
 const indicators = require('../lib/indicators');
 // ✅ NEW precision indicators for backtest
-const { calculateStochRSI, calculateBollingerBands, checkMTFRSIConfluence, detectVolumeNodes, detectMTFOBs } = require('../lib/indicators');
+const { calculateStochRSI, calculateBollingerBands, checkMTFRSIConfluence, detectVolumeNodes, detectMTFOBs, calculateSupertrend, calculateRVOL, checkMTFMACD } = require('../lib/indicators');
 const smc = require('../lib/smartmoney');
 const axios = require('axios');
 
@@ -69,6 +69,9 @@ async (conn, mek, m, { reply, args }) => {
             let liquiditySweep   = smc.checkLiquiditySweep ? smc.checkLiquiditySweep(slice.slice(-15)) : 'None';
             let choch            = smc.checkChoCH ? smc.checkChoCH(slice.slice(-20)) : 'None';
             let mtfOBsExtra      = detectMTFOBs(slice.slice(-15));
+            let supertrend       = calculateSupertrend(slice.slice(-60));
+            let rvol             = calculateRVOL(slice.slice(-30));
+            let mtfMACD          = checkMTFMACD(slice.slice(-60), slice.slice(-60)); // approximate
 
             let longScore = 0, shortScore = 0;
 
@@ -124,13 +127,26 @@ async (conn, mek, m, { reply, args }) => {
             if (mtfOBsExtra.bullish) longScore++;
             if (mtfOBsExtra.bearish) shortScore++;
 
+            // ✅ NEW v4: Supertrend
+            if (supertrend.justFlipUp)   longScore  += 2;
+            else if (supertrend.isBull)  longScore++;
+            if (supertrend.justFlipDown) shortScore += 2;
+            else if (supertrend.isBear)  shortScore++;
+
+            // ✅ NEW v4: RVOL (strong volume confirms moves)
+            if (rvol.signal === 'HIGH' || rvol.signal === 'EXTREME') { longScore += 0.5; shortScore += 0.5; }
+
+            // ✅ NEW v4: MTF MACD Confluence
+            if (mtfMACD.signal === 'STRONG_BULL') longScore  += 2;
+            if (mtfMACD.signal === 'STRONG_BEAR') shortScore += 2;
+
             let tradeTaken = false;
             let isLong = false;
 
             // ✅ UPGRADED: Strict Mode - ලකුණු 6 ක් වත් ඕනේ වගේම ADX එක 20 ට වඩා වැඩි වෙන්නත් ඕනේ
             if (adxData.value > 20 || adxData.isStrong) {
-                if (longScore >= 8) { tradeTaken = true; isLong = true; longTrades++; }
-                else if (shortScore >= 8) { tradeTaken = true; isLong = false; shortTrades++; }
+                if (longScore >= 10) { tradeTaken = true; isLong = true; longTrades++; }  // 10/30 = 33% threshold
+                else if (shortScore >= 10) { tradeTaken = true; isLong = false; shortTrades++; }
             }
 
             if (tradeTaken) {
@@ -182,11 +198,14 @@ async (conn, mek, m, { reply, args }) => {
 ▫️ SMC (OB, Sweeps, ChoCH)
 ▫️ Harmonic Patterns & ICT Silver Bullet
 ▫️ Stochastic RSI + Bollinger Bands
+▫️ Supertrend (10,3) 🔥 NEW
+▫️ RVOL (Relative Volume) 🔥 NEW
+▫️ MTF MACD Confluence (15m+1H) 🔥 NEW
 ▫️ MTF RSI Confluence + Volume Nodes
 ▫️ Liquidity Sweep + ChoCH (ICT) 🔥 NEW
 ▫️ Short-Term Order Blocks 🔥 NEW
 ▫️ *NOTE: Live Sentiment + MTF OB Confluence adds in real signals*
-▫️ Run *.future ${coin.replace('USDT','')}* for full 26-factor live signal
+▫️ Run *.future ${coin.replace('USDT','')}* for full 30-factor live signal
 
 *🎯 Performance Results:*
 ▫️ Total Trades: ${totalTrades} (Long: ${longTrades} | Short: ${shortTrades})
