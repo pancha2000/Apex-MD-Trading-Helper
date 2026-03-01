@@ -507,3 +507,99 @@ cmd({
         await reply('❌ Error: ' + e.message);
     }
 });
+
+
+// ═══════════════════════════════════════════════════════════════
+// CMD 5: .resetpaper [amount] — Paper account reset to chosen amount
+// ═══════════════════════════════════════════════════════════════
+cmd({
+    pattern: 'resetpaper',
+    alias: ['paperreset', 'resetpt', 'newpaper'],
+    desc: 'Paper trading account සම්පූර්ණයෙන් reset කරන්න',
+    category: 'crypto',
+    react: '🔄',
+    filename: __filename
+}, async (conn, mek, m, { reply, args }) => {
+    try {
+        // Amount — arg ලෙස දීලා නැත්නම් margin use කරනවා
+        let resetAmount = 0;
+        if (args[0] && !isNaN(parseFloat(args[0]))) {
+            resetAmount = parseFloat(args[0]);
+        } else {
+            resetAmount = await db.getMargin(m.sender) || 100;
+        }
+
+        if (resetAmount < 1) {
+            return await reply(
+                `❌ *Invalid Amount!*\n\n` +
+                `Usage: *.resetpaper 500* (amount ලබා දෙන්න)\n` +
+                `    හෝ: *.resetpaper* (margin amount use කරනවා)\n\n` +
+                `Min: $1`
+            );
+        }
+
+        // Close all open paper trades first
+        const openTrades = await db.Trade.find({
+            userJid: m.sender,
+            isPaper: true,
+            status: { $in: ['active', 'pending'] }
+        });
+
+        let closedCount = 0;
+        for (const trade of openTrades) {
+            try {
+                // Get live price for final P&L
+                const livePrice = await getLivePrice(trade.coin).catch(() => null);
+                let paperProfit = 0;
+                if (livePrice && trade.quantity) {
+                    const diff = trade.direction === 'LONG'
+                        ? livePrice - trade.entry
+                        : trade.entry - livePrice;
+                    paperProfit = diff * trade.quantity;
+                }
+                // Force-close without updating balance (balance getting reset anyway)
+                await db.Trade.findByIdAndUpdate(trade._id, {
+                    status: 'closed',
+                    result: 'MANUAL_RESET',
+                    paperProfit: parseFloat(paperProfit.toFixed(2))
+                });
+                closedCount++;
+            } catch(e) { /* skip */ }
+        }
+
+        // ✅ Reset paper account — balance, start balance, stats, win/loss counters
+        await db.setPaperCapital(m.sender, resetAmount);
+
+        // Also update margin if amount provided
+        if (args[0] && !isNaN(parseFloat(args[0]))) {
+            await db.setMargin(m.sender, resetAmount);
+        }
+
+        const closedMsg = closedCount > 0
+            ? `\n🗑️ Closed ${closedCount} open position(s)`
+            : '';
+
+        await reply(`
+🔄 *PAPER ACCOUNT RESET!*
+━━━━━━━━━━━━━━━━━━━━━━
+
+✅ Account සම්පූර්ණයෙන් reset විය!
+${closedMsg}
+
+💰 *New Balance: $${resetAmount.toFixed(2)}*
+📊 Start Capital: $${resetAmount.toFixed(2)}
+📈 Net P/L: $0.00 (0%)
+🎯 Trades: 0 | Win Rate: 0%
+
+━━━━━━━━━━━━━━━━━━━━━━
+💡 *Commands:*
+   *.paper* — New trade open කරන්න
+   *.stats* — Stats බලන්න
+   *.resetpaper 500* — $500 ලෙස reset
+   *.resetpaper* — Margin amount ලෙස reset`.trim());
+
+        await m.react('✅');
+    } catch (e) {
+        await reply('❌ Error: ' + e.message);
+    }
+});
