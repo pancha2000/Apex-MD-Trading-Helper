@@ -1,76 +1,110 @@
+/**
+ * ═══════════════════════════════════════════════════════════════
+ *  APEX-MD  ·  scanner.js  ·  Event-Driven WebSocket Edition
+ *  ─────────────────────────────────────────────────────────────
+ *  • NO setInterval for signal scanning — 100% event-driven
+ *  • Listens to binance.wsEvents '15m_candle_close' events
+ *  • 15-second debounce batches multiple simultaneous closes
+ *    into a single scan pass (all 30 coins close at the same time)
+ *  • Trade Manager keeps its 60-second price-poll (only 1 REST
+ *    call per active trade per minute — minimal overhead)
+ *  • WebSocket init called automatically when scanner starts
+ * ═══════════════════════════════════════════════════════════════
+ */
+
+'use strict';
+
 const { cmd } = require('../lib/commands');
-const config = require('../config');
-const db = require('../lib/database');
-const axios = require('axios');
-const binance = require('../lib/binance');
+const config   = require('../config');
+const db       = require('../lib/database');
+const axios    = require('axios');
+const binance  = require('../lib/binance');
 const analyzer = require('../lib/analyzer');
 
-// ─── Sentiment Cache ───
-let cachedSentiment = null;
+// ─── Sentiment Cache ───────────────────────────────────────────
+let cachedSentiment    = null;
 let sentimentCacheTime = 0;
-const SENTIMENT_CACHE_MS = 5 * 60 * 1000;
+const SENTIMENT_CACHE_MS = 5 * 60 * 1000;   // refresh every 5 min
 
 async function getSentimentCached() {
     if (!cachedSentiment || Date.now() - sentimentCacheTime > SENTIMENT_CACHE_MS) {
         cachedSentiment = await binance.getMarketSentiment().catch(() => ({
             totalBias: '0', overallSentiment: 'NEUTRAL', tradingBias: 'Neutral',
-            fngEmoji: '⚪', fngValue: 'N/A', btcDominance: 'N/A', newsSentimentScore: 0
+            fngEmoji: '⚪', fngValue: 'N/A', btcDominance: 'N/A', newsSentimentScore: 0,
         }));
         sentimentCacheTime = Date.now();
     }
     return cachedSentiment;
 }
 
-// ─── Top 5 Setups Scanner ───
+// ─── Top 5 Setups Scanner ─────────────────────────────────────
+/**
+ * Scans all watched coins (already in WS cache) for high-probability
+ * setups using the 14-Factor analyzer.
+ * No REST calls are made here — everything reads from the in-memory cache.
+ */
 async function getTopDownSetups() {
-    let foundSetups = [];
-    const dynamicCoins = await binance.getTopTrendingCoins(20);  // 20 is optimal - faster + less API rate limit
+    const foundSetups = [];
 
-    let scanned = 0;
-    for (let coin of dynamicCoins) {
+    // Use the coins already tracked by the WebSocket stream
+    // Falls back to a REST fetch if the WS hasn't initialised yet
+    const coinsToScan = binance.isReady()
+        ? binance.getWatchedCoins()
+        : await binance.getTopTrendingCoins(20);
+
+    for (const coin of coinsToScan) {
         try {
-            scanned++;
-            await new Promise(resolve => setTimeout(resolve, 300));  // slightly more delay to avoid rate limit
             const aData = await analyzer.run14FactorAnalysis(coin, '15m');
 
-            if (aData.score >= 9) {  // 9/30 = 30% minimum confluence
-                const sent = await getSentimentCached();
+            if (aData.score >= 9) {
+                const sent     = await getSentimentCached();
                 const sentBias = parseFloat(sent.totalBias) || 0;
                 const sentBonus =
                     (aData.direction === 'LONG'  && sentBias >= 1)  ?  1 :
                     (aData.direction === 'SHORT' && sentBias <= -1) ?  1 :
                     (aData.direction === 'LONG'  && sentBias <= -1) ? -1 :
                     (aData.direction === 'SHORT' && sentBias >= 1)  ? -1 : 0;
+
                 const adjustedScore = aData.score + sentBonus;
 
                 foundSetups.push({
-                    coin: coin.replace('USDT', ''),
-                    type: aData.direction === 'LONG' ? 'LONG 🟢' : 'SHORT 🔴',
-                    rawScore: adjustedScore,
-                    score: `${adjustedScore}/${aData.maxScore}`,
-                    price: aData.priceStr,
-                    tp1: aData.tp1,
-                    tp: aData.tp2,
-                    sl: aData.sl,
-                    adx: aData.adxData.value,
-                    reasons: aData.reasons,
+                    coin:          coin.replace('USDT', ''),
+                    type:          aData.direction === 'LONG' ? 'LONG 🟢' : 'SHORT 🔴',
+                    rawScore:      adjustedScore,
+                    score:         `${adjustedScore}/${aData.maxScore}`,
+                    price:         aData.priceStr,
+                    tp1:           aData.tp1,
+                    tp:            aData.tp2,
+                    sl:            aData.sl,
+                    adx:           aData.adxData.value,
+                    reasons:       aData.reasons,
                     liquiditySweep: aData.liquiditySweep || 'None',
-                    choch: aData.choch || 'None',
-                    sentEmoji: sentBonus > 0 ? '📰✅' : sentBonus < 0 ? '📰⚠️' : ''
+                    choch:         aData.choch || 'None',
+                    sentEmoji:     sentBonus > 0 ? '📰✅' : sentBonus < 0 ? '📰⚠️' : '',
                 });
             }
-        } catch (err) { }
+        } catch (_e) { /* skip failed coin */ }
     }
 
     foundSetups.sort((a, b) => b.rawScore - a.rawScore);
     return foundSetups.slice(0, 5);
 }
 
-// ─── Scanner State ───
-let activeScannerLoop = null;
-let activeTradeManager = null;
+// ─── Scanner / Trade Manager State ────────────────────────────
+let _scannerActive   = false;    // true while WS scanner is listening
+let activeTradeManager = null;   // setInterval handle for trade manager
+let _15mCloseHandler = null;     // reference to the EventEmitter listener
+let _debounceTimer   = null;     // debounce handle for candle-close bursts
+let _connRef         = null;     // WhatsApp connection reference
+let _ownerJidRef     = null;     // Owner JID reference
 
-// ─── Trade Manager Loop ───────────────────────────────────────
+// ─── Trade Manager (60-second price poll) ─────────────────────
+/**
+ * The trade manager still uses a 60-second setInterval because it
+ * needs the current live price for each active trade individually.
+ * It makes ONE REST call per active trade per minute — well within
+ * Binance rate limits and unrelated to the scanner's kline polling.
+ */
 function startTradeManager(conn) {
     if (activeTradeManager) return;
 
@@ -80,21 +114,24 @@ function startTradeManager(conn) {
             if (!activeTrades || activeTrades.length === 0) return;
             const currentSettings = await db.getSettings();
 
-            for (let trade of activeTrades) {
+            for (const trade of activeTrades) {
                 try {
-                    const res = await axios.get(`https://api.binance.com/api/v3/ticker/price?symbol=${trade.coin}`, { timeout: 5000 });
+                    const res = await axios.get(
+                        `https://api.binance.com/api/v3/ticker/price?symbol=${trade.coin}`,
+                        { timeout: 5000 }
+                    );
                     const currentPrice = parseFloat(res.data.price);
-                    const isLong   = trade.direction === 'LONG';
-                    const isPaper  = !!trade.isPaper;
-                    const cb       = trade.coin.replace('USDT', '');
-                    const de       = isLong ? '🟢' : '🔴';
-                    const dir      = trade.direction;
+                    const isLong  = trade.direction === 'LONG';
+                    const isPaper = !!trade.isPaper;
+                    const cb      = trade.coin.replace('USDT', '');
+                    const de      = isLong ? '🟢' : '🔴';
+                    const dir     = trade.direction;
 
-                    // ── PENDING → FILL ────────────────────────
+                    // ── PENDING → FILL ──────────────────────────────
                     if (trade.status === 'pending') {
                         const hit = isLong ? currentPrice <= trade.entry : currentPrice >= trade.entry;
                         if (hit) {
-                            trade.status   = 'active';
+                            trade.status    = 'active';
                             trade.fillPrice = currentPrice;
                             await trade.save();
                             if (isPaper) {
@@ -103,10 +140,10 @@ function startTradeManager(conn) {
                                     `🪙 *${cb}/USDT* ${de} *${dir}*\n\n` +
                                     `📍 Set: $${parseFloat(trade.entry).toFixed(4)}\n` +
                                     `💹 Fill: $${currentPrice.toFixed(4)}\n\n` +
-                                    `🎯 TP1: $${parseFloat(trade.tp1||trade.tp).toFixed(4)}\n` +
-                                    `🎯 TP2: $${parseFloat(trade.tp2||trade.tp).toFixed(4)}\n` +
+                                    `🎯 TP1: $${parseFloat(trade.tp1 || trade.tp).toFixed(4)}\n` +
+                                    `🎯 TP2: $${parseFloat(trade.tp2 || trade.tp).toFixed(4)}\n` +
                                     `🛡️ SL:  $${parseFloat(trade.sl).toFixed(4)}\n\n` +
-                                    `📊 *.myptrades* ගසා Live P&L බලන්න`
+                                    `📊 *.myptrades* ගසා Live P&L බලන්න`,
                                 });
                             } else {
                                 await conn.sendMessage(trade.userJid, { text:
@@ -115,16 +152,16 @@ function startTradeManager(conn) {
                                     `📍 Entry Zone: $${parseFloat(trade.entry).toFixed(4)}\n` +
                                     `💹 Current: $${currentPrice.toFixed(4)}\n\n` +
                                     `✅ *Exchange හිදී Order Fill Confirm කරන්න!*\n\n` +
-                                    `🎯 TP1: $${parseFloat(trade.tp1||trade.tp).toFixed(4)}\n` +
-                                    `🎯 TP2: $${parseFloat(trade.tp2||trade.tp).toFixed(4)}\n` +
-                                    `🛡️ SL:  $${parseFloat(trade.sl).toFixed(4)}`
+                                    `🎯 TP1: $${parseFloat(trade.tp1 || trade.tp).toFixed(4)}\n` +
+                                    `🎯 TP2: $${parseFloat(trade.tp2 || trade.tp).toFixed(4)}\n` +
+                                    `🛡️ SL:  $${parseFloat(trade.sl).toFixed(4)}`,
                                 });
                             }
                         }
                         continue;
                     }
 
-                    // ── TP1 HIT ───────────────────────────────
+                    // ── TP1 HIT ─────────────────────────────────────
                     if (trade.tp1 && !trade.tp1Hit) {
                         const tp1v   = parseFloat(trade.tp1);
                         const tp1Hit = isLong ? currentPrice >= tp1v : currentPrice <= tp1v;
@@ -134,7 +171,7 @@ function startTradeManager(conn) {
                                 const pQty = (trade.quantity || 0) * 0.33;
                                 const pPnl = Math.abs(tp1v - trade.entry) * pQty;
                                 await db.updatePaperBalance(trade.userJid, pPnl, false, false);
-                                trade.sl = trade.entry; // move SL to break-even
+                                trade.sl = trade.entry;
                                 await trade.save();
                                 await conn.sendMessage(trade.userJid, { text:
                                     `🎯 *PAPER TP1 HIT!* 💰\n━━━━━━━━━━━━━━━━\n` +
@@ -142,7 +179,7 @@ function startTradeManager(conn) {
                                     `✅ TP1: $${tp1v.toFixed(4)} Hit!\n` +
                                     `💰 +33% Profit: +$${pPnl.toFixed(2)} ✅ Auto-booked\n` +
                                     `🛡️ SL → Entry (Break-even) ✅ Auto-moved\n\n` +
-                                    `🎯 TP2: $${parseFloat(trade.tp2||trade.tp).toFixed(4)} targeting...`
+                                    `🎯 TP2: $${parseFloat(trade.tp2 || trade.tp).toFixed(4)} targeting...`,
                                 });
                             } else {
                                 await trade.save();
@@ -156,13 +193,13 @@ function startTradeManager(conn) {
                                     `*Exchange හිදී කරන්න:*\n` +
                                     `• Position ෙන් 33% Close කරන්න\n` +
                                     `• SL → Entry ($${parseFloat(trade.entry).toFixed(4)}) Move කරන්න\n` +
-                                    `• TP2: $${parseFloat(trade.tp2||trade.tp).toFixed(4)} target`
+                                    `• TP2: $${parseFloat(trade.tp2 || trade.tp).toFixed(4)} target`,
                                 });
                             }
                         }
                     }
 
-                    // ── TP2 HIT ───────────────────────────────
+                    // ── TP2 HIT ─────────────────────────────────────
                     if (trade.tp1Hit && !trade.tp2Hit && trade.tp2) {
                         const tp2v   = parseFloat(trade.tp2);
                         const tp2Hit = isLong ? currentPrice >= tp2v : currentPrice <= tp2v;
@@ -178,7 +215,7 @@ function startTradeManager(conn) {
                                     `🪙 *${cb}/USDT* ${de} *${dir}*\n\n` +
                                     `🔥 TP2: $${tp2v.toFixed(4)} Hit!\n` +
                                     `💰 +33% Profit: +$${pPnl.toFixed(2)} ✅ Auto-booked\n\n` +
-                                    `🎯 Remaining 34% → TP3: $${parseFloat(trade.tp).toFixed(4)}`
+                                    `🎯 Remaining 34% → TP3: $${parseFloat(trade.tp).toFixed(4)}`,
                                 });
                             } else {
                                 await conn.sendMessage(trade.userJid, { text:
@@ -187,17 +224,17 @@ function startTradeManager(conn) {
                                     `🔥 TP2: $${tp2v.toFixed(4)} Hit!\n\n` +
                                     `*Exchange හිදී කරන්න:*\n` +
                                     `• Position ෙන් 33% Close කරන්න\n` +
-                                    `• TP3: $${parseFloat(trade.tp).toFixed(4)} target hold`
+                                    `• TP3: $${parseFloat(trade.tp).toFixed(4)} target hold`,
                                 });
                             }
                         }
                     }
 
-                    // ── DCA ZONE ──────────────────────────────
+                    // ── DCA ZONE ─────────────────────────────────────
                     if (trade.dcaLevel === 0) {
                         const risk   = Math.abs(trade.entry - trade.sl);
                         const dcaZone = isLong ? trade.entry - risk * 0.7 : trade.entry + risk * 0.7;
-                        const atDca  = isLong
+                        const atDca   = isLong
                             ? (currentPrice <= dcaZone && currentPrice > trade.sl)
                             : (currentPrice >= dcaZone && currentPrice < trade.sl);
                         if (atDca) {
@@ -213,14 +250,14 @@ function startTradeManager(conn) {
                                 (isPaper
                                     ? `• *.paper* reply කරලා 2nd position open කරන්න\n• SL: $${parseFloat(trade.sl).toFixed(4)} (unchanged)`
                                     : `• Exchange ෙල් same margin DCA order දාන්න\n• SL: $${parseFloat(trade.sl).toFixed(4)} (unchanged)`) +
-                                `\n\n⚠️ _SL zone ළඟා නොවූ විට DCA කරන්න!_`
+                                `\n\n⚠️ _SL zone ළඟා නොවූ විට DCA කරන්න!_`,
                             });
                         }
                     }
 
-                    // ── TRAILING SL (Break-even) ───────────────
+                    // ── TRAILING SL (Break-even) ─────────────────────
                     if (currentSettings.trailingSl && !trade.tp1Hit) {
-                        const risk = Math.abs(trade.entry - trade.sl);
+                        const risk     = Math.abs(trade.entry - trade.sl);
                         const beTarget = isLong ? trade.entry + risk : trade.entry - risk;
                         let trail = false;
                         if (isLong  && currentPrice >= beTarget && parseFloat(trade.sl) < trade.entry) { trade.sl = trade.entry; trail = true; }
@@ -232,37 +269,34 @@ function startTradeManager(conn) {
                                 `🪙 *${cb}/USDT* ${de} *${dir}*\n\n` +
                                 `Stop Loss → Entry $${parseFloat(trade.entry).toFixed(4)}\n` +
                                 (isPaper ? `✅ Auto-updated` : `✅ Exchange හිදී SL update කරන්න!`) +
-                                `\n_Trade 100% Risk-Free!_ 🎉`
+                                `\n_Trade 100% Risk-Free!_ 🎉`,
                             });
                         }
                     }
 
-                    // ── TP3 / SL HIT → CLOSE ─────────────────
+                    // ── TP3 / SL HIT → CLOSE ────────────────────────
                     let hitType = null, result = '';
                     const tp3v = parseFloat(trade.tp), slv = parseFloat(trade.sl);
                     if (isLong) {
-                        if (currentPrice >= tp3v)      { hitType = 'TP3'; result = 'WIN'; }
-                        else if (currentPrice <= slv)  { hitType = 'SL';  result = slv === parseFloat(trade.entry) ? 'BREAK-EVEN' : 'LOSS'; }
+                        if (currentPrice >= tp3v)     { hitType = 'TP3'; result = 'WIN'; }
+                        else if (currentPrice <= slv) { hitType = 'SL';  result = slv === parseFloat(trade.entry) ? 'BREAK-EVEN' : 'LOSS'; }
                     } else {
-                        if (currentPrice <= tp3v)      { hitType = 'TP3'; result = 'WIN'; }
-                        else if (currentPrice >= slv)  { hitType = 'SL';  result = slv === parseFloat(trade.entry) ? 'BREAK-EVEN' : 'LOSS'; }
+                        if (currentPrice <= tp3v)     { hitType = 'TP3'; result = 'WIN'; }
+                        else if (currentPrice >= slv) { hitType = 'SL';  result = slv === parseFloat(trade.entry) ? 'BREAK-EVEN' : 'LOSS'; }
                     }
 
                     if (hitType) {
                         const emoji = result === 'WIN' ? '🏆' : result === 'BREAK-EVEN' ? '🛡️' : '💀';
 
                         if (isPaper) {
-                            // Auto-close paper — calculate remaining qty
                             const remFactor = trade.tp1Hit && trade.tp2Hit ? 0.34 : trade.tp1Hit ? 0.67 : 1.0;
                             const closeQty  = (trade.quantity || 0) * remFactor;
                             const priceDiff = isLong ? currentPrice - trade.entry : trade.entry - currentPrice;
                             const profit    = priceDiff * closeQty;
                             const pnlPct    = trade.marginUsed > 0 ? (profit / trade.marginUsed * 100) : 0;
-
                             await db.closeTrade(trade._id, result, pnlPct, profit);
                             await db.updatePaperBalance(trade.userJid, profit, result === 'WIN', result === 'BREAK-EVEN');
                             const user = await db.getUser(trade.userJid);
-
                             await conn.sendMessage(trade.userJid, { text:
                                 `${emoji} *PAPER TRADE CLOSED!* ${hitType === 'TP3' ? '🎯' : '⛔'}\n━━━━━━━━━━━━━━━━\n` +
                                 `🪙 *${cb}/USDT* ${de} *${dir}*\n\n` +
@@ -270,83 +304,134 @@ function startTradeManager(conn) {
                                 `📍 Entry: $${parseFloat(trade.entry).toFixed(4)}\n\n` +
                                 `💰 *PnL: ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)*\n` +
                                 `💼 Balance: $${(user.paperBalance || 0).toFixed(2)}\n\n` +
-                                `📜 *.paperhistory* | 📊 *.margin*`
+                                `📜 *.paperhistory* | 📊 *.margin*`,
                             });
-
                         } else {
-                            // Real: notify + auto-remove from tracking
                             const action = hitType === 'TP3'
                                 ? `• Position සම්පූර්ණයෙන් Close කරන්න\n• Profit Withdraw/Reinvest decide කරන්න`
                                 : `• Position Close කරන්න\n• Loss accept කරලා next setup බලන්න`;
-
                             await db.closeTrade(trade._id, result, 0, 0);
-
                             await conn.sendMessage(trade.userJid, { text:
                                 `${emoji} *${hitType} HIT!* ${hitType === 'TP3' ? '🎉' : '⛔'}\n━━━━━━━━━━━━━━━━\n` +
                                 `🪙 *${cb}/USDT* ${de} *${dir}*\n\n` +
                                 `*${result}* — ${hitType} @ $${currentPrice.toFixed(4)}\n` +
                                 `📍 Entry was: $${parseFloat(trade.entry).toFixed(4)}\n\n` +
                                 `*Exchange හිදී කරන්න:*\n` + action + `\n\n` +
-                                `_✅ Bot tracking ෙන් auto-removed_`
+                                `_✅ Bot tracking ෙන් auto-removed_`,
                             });
                         }
                     }
 
-                } catch (e) { /* skip failed coin */ }
+                } catch (_e) { /* skip failed individual trade */ }
             }
-        } catch (err) { }
+        } catch (_e) { /* top-level guard */ }
     }, 60000);
 }
 
+// ─── Signal Scanner (Event-Driven) ────────────────────────────
 
-// ─── Signal Scanner Loop ───
-function startSignalScanner(conn, ownerJid) {
-    if (activeScannerLoop) return;
-
-    const runScan = async () => {
-        try {
-            const setups = await getTopDownSetups();
-            if (!setups || setups.length === 0) return;
-
-            const sent = await getSentimentCached();
-            let msg = `🚀 *14-FACTOR AUTO SIGNAL ALERT* 🚀\n_Top ${setups.length} Best Setups Now_\n\n`;
-            msg += `🧠 *Market:* ${sent.overallSentiment} | ${sent.fngEmoji} F&G: ${sent.fngValue}\n\n`;
-            setups.forEach((s, i) => {
-                msg += `*${i + 1}. #${s.coin}* - ${s.type} (Score: ${s.score} ⭐) ${s.sentEmoji || ''}\n   📍 $${s.price} | ADX: ${s.adx}\n   ✔️ ${s.reasons}\n   🤖 .future ${s.coin} 15m\n\n`;
-            });
-            msg += `_⏱️ ඊළඟ Scan - 5min | .set 1 off ගසා Stop කරන්න_`;
-
-            await conn.sendMessage(ownerJid, { text: msg.trim() });
-        } catch (e) { }
-    };
-
-    runScan();
-    activeScannerLoop = setInterval(runScan, 5 * 60 * 1000);
+/**
+ * Debounced scan runner.
+ * Called when a 15m candle closes. Multiple coins close at the same
+ * wall-clock second, so we collect all close events for 15 seconds
+ * before running a single scan pass.
+ */
+function scheduleDebounced() {
+    if (_debounceTimer) return;   // already waiting
+    _debounceTimer = setTimeout(async () => {
+        _debounceTimer = null;
+        await runSignalScan();
+    }, 15000);  // 15 s window to collect all simultaneous 15m closes
 }
 
-// ─── Manual Scan Command (.scan) ───
+async function runSignalScan() {
+    if (!_connRef || !_ownerJidRef) return;
+
+    try {
+        const setups = await getTopDownSetups();
+        if (!setups || setups.length === 0) return;
+
+        const sent  = await getSentimentCached();
+        let msg = `🚀 *14-FACTOR AUTO SIGNAL ALERT* 🚀\n_Top ${setups.length} Best Setups Now_\n\n`;
+        msg += `🧠 *Market:* ${sent.overallSentiment} | ${sent.fngEmoji} F&G: ${sent.fngValue}\n\n`;
+        setups.forEach((s, i) => {
+            msg += `*${i + 1}. #${s.coin}* - ${s.type} (Score: ${s.score} ⭐) ${s.sentEmoji || ''}\n   📍 $${s.price} | ADX: ${s.adx}\n   ✔️ ${s.reasons}\n   🤖 .future ${s.coin} 15m\n\n`;
+        });
+        msg += `_⏱️ Next scan on 15m candle close | .set 1 off ගසා Stop කරන්න_`;
+
+        await _connRef.sendMessage(_ownerJidRef, { text: msg.trim() });
+    } catch (_e) { /* silent — keep the listener alive */ }
+}
+
+/**
+ * Attach the 15m candle-close listener to binance.wsEvents.
+ * Each time ANY watched coin closes its 15m bar the debounce fires.
+ */
+function startSignalScanner(conn, ownerJid) {
+    if (_scannerActive) return;
+
+    _connRef    = conn;
+    _ownerJidRef = ownerJid;
+    _scannerActive = true;
+
+    _15mCloseHandler = () => scheduleDebounced();
+    binance.wsEvents.on('15m_candle_close', _15mCloseHandler);
+
+    console.log('[Scanner] ✅ Event-driven signal scanner started (listening for 15m closes).');
+
+    // Run an initial scan immediately if the cache is ready
+    if (binance.isReady()) {
+        runSignalScan().catch(() => {});
+    }
+}
+
+function stopSignalScanner() {
+    if (!_scannerActive) return;
+    if (_15mCloseHandler) {
+        binance.wsEvents.off('15m_candle_close', _15mCloseHandler);
+        _15mCloseHandler = null;
+    }
+    if (_debounceTimer) {
+        clearTimeout(_debounceTimer);
+        _debounceTimer = null;
+    }
+    _scannerActive = false;
+    console.log('[Scanner] 🔴 Signal scanner stopped.');
+}
+
+// ─── Manual Scan Command (.scan) ──────────────────────────────
 cmd({
-    pattern: "scan",
-    alias: ["superscan", "scanner"],
-    desc: "Manual Market Scan - Top 5 Best Setups",
-    category: "crypto",
-    react: "🔍",
-    filename: __filename
+    pattern:  'scan',
+    alias:    ['superscan', 'scanner'],
+    desc:     'Manual Market Scan - Top 5 Best Setups',
+    category: 'crypto',
+    react:    '🔍',
+    filename: __filename,
 },
 async (conn, mek, m, { reply }) => {
     try {
         await m.react('⏳');
 
-        const scanStatus = activeScannerLoop
-            ? "🟢 *Auto Scanner:* ON (.set 1 off ගසා Stop)"
-            : "🔴 *Auto Scanner:* OFF (.set 1 on ගසා Start)";
+        const wsStatus = binance.isReady()
+            ? '🟢 *WebSocket:* LIVE (Zero-Latency Cache Active)'
+            : '🟡 *WebSocket:* Initialising...';
+        const scanStatus = _scannerActive
+            ? '🟢 *Auto Scanner:* ON (.set 1 off ගසා Stop)'
+            : '🔴 *Auto Scanner:* OFF (.set 1 on ගසා Start)';
 
-        await reply(`🔍 *MANUAL SCAN ක්‍රியාත්මක වේ...*\n${scanStatus}\n\nTop 20 Coins Scan වෙමින් පවතී... ⏳\n_(High quality filter: Volume + Momentum)_`);
+        await reply(
+            `🔍 *MANUAL SCAN ක්‍රියාත්මක වේ...*\n${wsStatus}\n${scanStatus}\n\n` +
+            `Top ${binance.isReady() ? binance.getWatchedCoins().length : 20} Coins Scan වෙමින් පවතී... ⏳\n` +
+            `_(No REST polling — reads from live WS cache)_`
+        );
 
         const setups = await getTopDownSetups();
 
         if (setups.length === 0) {
-            return await reply(`╔═══════════════════════════╗\n║  🔍 *MANUAL SCAN RESULTS*  ║\n╚═══════════════════════════╝\n\nScore 9/30 ට වඩා ලබාගත් Setups දැනට නොමැත. ⚪\n\nකිසිවේලාවකට පසු නැවත .scan ගසන්න.\n\n${scanStatus}`);
+            return await reply(
+                `╔═══════════════════════════╗\n║  🔍 *MANUAL SCAN RESULTS*  ║\n╚═══════════════════════════╝\n\n` +
+                `Score 9/30 ට වඩා ලබාගත් Setups දැනට නොමැත. ⚪\n\nකිසිවේලාවකට පසු නැවත .scan ගසන්න.\n\n${scanStatus}`
+            );
         }
 
         const sent = await getSentimentCached();
@@ -355,31 +440,44 @@ async (conn, mek, m, { reply }) => {
         outMsg += `${sent.fngEmoji} F&G: ${sent.fngValue} | ₿ BTC.D: ${sent.btcDominance}% | 📰 ${sent.newsSentimentScore > 0 ? '+' : ''}${sent.newsSentimentScore}\n\n`;
         setups.forEach((s, i) => {
             const mSweep = s.liquiditySweep !== 'None' ? `\n   💧 ${s.liquiditySweep}` : '';
-        const mChoch = s.choch !== 'None' ? `\n   🔄 ${s.choch}` : '';
-        outMsg += `*${i + 1}. #${s.coin}* - ${s.type} (Score: ${s.score} ⭐) ${s.sentEmoji || ''}\n   📍 Price: $${s.price}\n   🔥 ADX: ${s.adx}\n   ✔️ Reasons: ${s.reasons}${mSweep}${mChoch}\n   🤖 AI Check: ${config.PREFIX}future ${s.coin} 15m\n\n`;
+            const mChoch = s.choch !== 'None'          ? `\n   🔄 ${s.choch}` : '';
+            outMsg +=
+                `*${i + 1}. #${s.coin}* - ${s.type} (Score: ${s.score} ⭐) ${s.sentEmoji || ''}\n` +
+                `   📍 Price: $${s.price}\n   🔥 ADX: ${s.adx}\n` +
+                `   ✔️ Reasons: ${s.reasons}${mSweep}${mChoch}\n` +
+                `   🤖 AI Check: ${config.PREFIX}future ${s.coin} 15m\n\n`;
         });
-        outMsg += `${scanStatus}`;
+        outMsg += `${wsStatus}\n${scanStatus}`;
 
         await reply(outMsg.trim());
         await m.react('✅');
     } catch (e) { await reply('❌ Error: ' + e.message); }
 });
 
-// ─── Exports for settings.js ───
+// ─── Exports for settings.js ───────────────────────────────────
 function getScannerStatus() {
-    return !!activeScannerLoop;
+    return _scannerActive;
 }
 
+/**
+ * Called by settings.js when the user enables the scanner.
+ * Initialises the WebSocket (idempotent), starts trade manager,
+ * then attaches the event-driven signal scanner.
+ */
 async function startScannerFromSettings(conn, ownerJid) {
-    if (activeScannerLoop) return false;
+    if (_scannerActive) return false;
+
+    // Boot the WebSocket + seed cache if not already done
+    await binance.initWebSocketStreams(30);
+
     startTradeManager(conn);
     startSignalScanner(conn, ownerJid);
     return true;
 }
 
 function stopScannerFromSettings() {
-    if (!activeScannerLoop && !activeTradeManager) return false;
-    if (activeScannerLoop) { clearInterval(activeScannerLoop); activeScannerLoop = null; }
+    if (!_scannerActive && !activeTradeManager) return false;
+    stopSignalScanner();
     if (activeTradeManager) { clearInterval(activeTradeManager); activeTradeManager = null; }
     return true;
 }
