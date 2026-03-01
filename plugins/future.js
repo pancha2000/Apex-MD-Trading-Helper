@@ -135,6 +135,16 @@ Nearest FVG target: ${aData.fvgData.nearest ? '$' + aData.fvgData.nearest.mid + 
 Supertrend: ${aData.supertrend.signal} (${aData.supertrend.supertrendLevel}) ${aData.supertrend.justFlipUp ? '⚡FLIP UP' : aData.supertrend.justFlipDown ? '⚡FLIP DOWN' : ''}
 RVOL: ${aData.rvol.rvol}x (${aData.rvol.signal}) — ${aData.rvol.isTrustworthy ? 'Volume confirms move' : 'Low volume - wait'}
 MTF MACD: ${aData.mtfMACD.signal}
+Wyckoff Phase: ${aData.wyckoff.phase} (${aData.wyckoff.signal})
+Breaker Block: ${aData.breakers.display}
+EQH/EQL: ${aData.equalHL.display}
+Zone: ${aData.pdZone.zone} (${aData.pdZone.position}%) — ${aData.pdZone.tradeMatch ? 'ALIGNED ✅' : 'NOT ALIGNED ⚠️'}
+Ichimoku: ${aData.ichimoku.signal} | TK Cross: ${aData.ichimoku.tkBullCross ? 'BULL' : aData.ichimoku.tkBearCross ? 'BEAR' : 'None'}
+CVD: ${aData.cvd.trend} ${aData.cvd.bullDiv ? '(Hidden Accumulation!)' : aData.cvd.bearDiv ? '(Hidden Distribution!)' : ''}
+Heikin Ashi: ${aData.heikinAshi.consecutive}× ${aData.heikinAshi.signal} ${aData.heikinAshi.isStrong ? '(Strong)' : ''}
+Williams %R: ${aData.williamsR.value} (${aData.williamsR.signal})
+Pivot Signal: ${aData.pivotSignal.display}
+Fib Confluence: ${aData.fibConf.hasConfluence ? aData.fibConf.count + ' levels at $' + aData.fibConf.zone : 'None'}
 Liquidity Sweep: ${aData.liquiditySweep} | ChoCH: ${aData.choch}
 Short-Term OBs: Bull=${ aData.mtfOBsExtra.bullish ? aData.mtfOBsExtra.bullish.bottom+'-'+aData.mtfOBsExtra.bullish.top : 'None'} | Bear=${aData.mtfOBsExtra.bearish ? aData.mtfOBsExtra.bearish.bottom+'-'+aData.mtfOBsExtra.bearish.top : 'None'}
 Entry Validation: ${aData.entryValidation.warning || 'Entry OK ✅'}
@@ -165,6 +175,10 @@ Put/Call Ratio: ${entryConf.pcr.signal} | Netflow: ${entryConf.netflow.signal}
 7. Liquidity Sweep CONFIRMS direction = strong signal (smart money move)
 8. ChoCH present = trend reversal confirmed, high confidence
 9. If entryValidation has WARNING = reduce confidence, mention in trend field
+10. Wyckoff SPRING or UTAD = boost confidence +20% (highest probability setup)
+11. CVD Divergence = hidden smart money move — boost confidence +15%
+12. OTE Zone + Ichimoku aligned = institutional setup, boost +10%
+13. Price in Premium for LONG or Discount for SHORT = reduce confidence -15%
 
 STRICT OUTPUT RULES:
 - Return ONLY a single JSON object, nothing else
@@ -324,6 +338,18 @@ ${aData.emaRibbon ? '📊 *EMA Ribbon:* ' + aData.emaRibbon.display : ''}
 ⚡ *Supertrend:* ${aData.supertrend.display}
 📊 *RVOL:* ${aData.rvol.display}
 📈 *MTF MACD:* ${aData.mtfMACD.display}
+
+━━━━━━━━━━━━━━━━━━
+*🧠 ADVANCED INTELLIGENCE (v5)*
+━━━━━━━━━━━━━━━━━━
+🌊 *Wyckoff:* ${aData.wyckoff.display}
+${aData.breakers.display !== 'None' ? '🔲 *Breaker:* ' + aData.breakers.display + '\n' : ''}${aData.equalHL.display !== 'None' ? '💧 *Liquidity:* ' + aData.equalHL.display + '\n' : ''}🎯 *Zone:* ${aData.pdZone.display}
+${aData.ichimoku.display}
+${aData.cvd.display}
+${aData.heikinAshi.display}
+🅡 ${aData.williamsR.display}
+${aData.pivotSignal.display}
+${aData.fibConf.display}
 
 *🔬 5m MTF:*
 ${aData.mtf5m.status}
