@@ -31,21 +31,55 @@ async (conn, mek, m, { reply }) => {
         const coin = (coinMatch[1] || coinMatch[2]).replace('USDT', '') + 'USDT';
         const type = quotedText.includes('SPOT') ? 'spot' : 'future';
 
-        // ✅ FIX 2: Format දෙකම support කරනවා:
-        //   Format A: "ENTRY: $1234 | TP: $1300 | SL: $1200"  (future.js style)
-        //   Format B: "[TARGETS|ENTRY:1234|TP:1300|SL:1200]"   (spot.js style)
-        const targetMatch = 
-            quotedText.match(/ENTRY:\s*\$([0-9,.]+)\s*\|\s*TP:\s*\$([0-9,.]+)\s*\|\s*SL:\s*\$([0-9,.]+)/i) ||
-            quotedText.match(/\[TARGETS\|ENTRY:([0-9,.]+)\|TP:([0-9,.]+)\|SL:([0-9,.]+)\]/i);
-        
-        if (!targetMatch) return await reply('❌ Entry, TP, SL අගයන් සොයාගැනීමට නොහැක. (Track data නොමැත)');
+        // ✅ FIX 2: Format 3ක් support කරනවා:
+        //   Format A (NEW): "[TARGETS|ENTRY:x|TP1:x|TP2:x|TP3:x|SL:x]"  (future.js new style)
+        //   Format B (OLD): "[TARGETS|ENTRY:x|TP:x|SL:x]"                (future.js/spot.js old style)
+        //   Format C:       "ENTRY: $1234 | TP: $1300 | SL: $1200"       (plain text style)
 
-        const entry = parseFloat(targetMatch[1].replace(/,/g, ''));
-        const tp = parseFloat(targetMatch[2].replace(/,/g, ''));
-        const sl = parseFloat(targetMatch[3].replace(/,/g, ''));
+        // Format A — new full tag
+        const newTagMatch = quotedText.match(
+            /\[TARGETS\|ENTRY:([\d.]+)\|TP1:([\d.]+)\|TP2:([\d.]+)\|TP3:([\d.]+)\|SL:([\d.]+)\]/i
+        );
 
-        const tp1Match = quotedText.match(/TP1.*?\s*\$([0-9,.]+)/);
-        const tp1 = tp1Match ? parseFloat(tp1Match[1].replace(/,/g, '')) : null;
+        // Format B — old tag
+        const oldTagMatch = quotedText.match(
+            /\[TARGETS\|ENTRY:([\d,.]+)\|TP:([\d,.]+)\|SL:([\d,.]+)\]/i
+        );
+
+        // Format C — plain text
+        const plainMatch = quotedText.match(
+            /ENTRY:\s*\$([\d,.]+)\s*\|\s*TP:\s*\$([\d,.]+)\s*\|\s*SL:\s*\$([\d,.]+)/i
+        );
+
+        if (!newTagMatch && !oldTagMatch && !plainMatch) {
+            return await reply('❌ Entry, TP, SL අගයන් සොයාගැනීමට නොහැක. (Track data නොමැත)');
+        }
+
+        let entry, tp, tp1, tp2, sl;
+
+        if (newTagMatch) {
+            // Format A — all TP levels directly from tag
+            entry = parseFloat(newTagMatch[1]);
+            tp1   = parseFloat(newTagMatch[2]);
+            tp2   = parseFloat(newTagMatch[3]);
+            tp    = parseFloat(newTagMatch[4]); // TP3 = final target
+            sl    = parseFloat(newTagMatch[5]);
+        } else {
+            // Format B or C — extract entry/tp/sl, then parse TP1/TP2 from message body
+            const raw = oldTagMatch || plainMatch;
+            entry = parseFloat(raw[1].replace(/,/g, ''));
+            tp    = parseFloat(raw[2].replace(/,/g, ''));
+            sl    = parseFloat(raw[3].replace(/,/g, ''));
+
+            // Try to extract TP1 and TP2 from message text (future.js shows them explicitly)
+            const tp1Match = quotedText.match(/🎯\s*\*?TP1:\*?\s*\$?([\d,.]+)/i)
+                          || quotedText.match(/TP1[^$]*\$?([\d,.]+)/i);
+            const tp2Match = quotedText.match(/🎯\s*\*?TP2:\*?\s*\$?([\d,.]+)/i)
+                          || quotedText.match(/TP2[^$]*\$?([\d,.]+)/i);
+
+            tp1 = tp1Match ? parseFloat(tp1Match[1].replace(/,/g, '')) : null;
+            tp2 = tp2Match ? parseFloat(tp2Match[1].replace(/,/g, '')) : null;
+        }
 
         // ✅ FIX: Bulletproof Direction Detection 
         // (SHORT අකුර හෝ 🔴 ලකුණ තිබුණොත් අනිවාර්යයෙන්ම SHORT, නැත්නම් LONG)
@@ -62,7 +96,7 @@ async (conn, mek, m, { reply }) => {
 
         await db.saveTrade({
             userJid: m.sender,
-            coin, type, direction, entry, tp, tp1, sl, rrr,
+            coin, type, direction, entry, tp, tp1, tp2, sl, rrr,
             status: initialStatus
         });
 
@@ -70,7 +104,10 @@ async (conn, mek, m, { reply }) => {
             ? `⏳ *Pending Order:* Market එක $${entry} වෙත පැමිණි පසු Trade එක Auto-Active වනු ඇත.` 
             : `🟢 *Active Order:* Trade එක දැන් සිටම Track වේ.`;
 
-        await reply(`✅ *Trade Successfully Tracked!*\n\n🪙 ${coin} (${type.toUpperCase()} | ${direction})\n🎯 Entry: $${entry}\n💰 TP: $${tp}\n🛑 SL: $${sl}\n\n${statusMsg}`);
+        const tp2Line = tp2 ? `\n💰 TP2: $${tp2}` : '';
+        const tp1Line = tp1 ? `\n🎯 TP1: $${tp1}` : '';
+
+        await reply(`✅ *Trade Successfully Tracked!*\n\n🪙 ${coin} (${type.toUpperCase()} | ${direction})\n📍 Entry: $${entry}${tp1Line}${tp2Line}\n🏆 TP3: $${tp}\n🛑 SL: $${sl}\n\n${statusMsg}`);
         await m.react('✅');
     } catch (e) {
         await reply('❌ Error: ' + e.message);

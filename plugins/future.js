@@ -263,7 +263,7 @@ EXACT JSON (copy this structure, fill values):
         if (aData.ictSilverBullet !== "Active Time (No FVG)" && aData.ictSilverBullet !== "None") extraInfo += `\n🕒 *ICT Strategy:* ${aData.ictSilverBullet}`;
 
         const zoneWarn = aData.bestEntry.warning ? `\n\n${aData.bestEntry.warning}` : "";
-        const trackMsg = data.direction !== "WAIT" && !aData.isTrueChoppy ? `\n📌 Track: .track reply\n[TARGETS|ENTRY:${data.entry}|TP:${data.tp2}|SL:${data.sl}]` : "";
+        const trackMsg = data.direction !== "WAIT" && !aData.isTrueChoppy ? `\n📌 Track: .track reply\n[TARGETS|ENTRY:${data.entry}|TP1:${data.tp1}|TP2:${data.tp2}|TP3:${aData.tp3}|SL:${data.sl}]` : "";
         // ✅ FIX: Only show warning if killzone is ALSO not London/NY (avoid contradiction)
         const killzoneIsActive = aData.marketSMC.killzone.includes('London') || aData.marketSMC.killzone.includes('New York');
         const sessionWarn = killzoneIsActive ? "" :

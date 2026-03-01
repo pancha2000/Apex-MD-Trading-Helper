@@ -147,7 +147,7 @@ JSON only:
             
             const zoneWarn = aData.bestEntry.warning ? `\n\n${aData.bestEntry.warning}` : "";
             const rrrWarnMsg = !rrrCheck.pass ? `\n\n⚠️ *RRR WARNING:* ${rrrCheck.reason}` : "";
-            const trackMsg = data.direction !== "WAIT" ? `\n📌 Track: .track reply\n[TARGETS|ENTRY:${data.entry}|TP:${data.tp2}|SL:${data.sl}](${coin})` : "";
+            const trackMsg = data.direction !== "WAIT" ? `\n📌 Track: .track reply\n[TARGETS|ENTRY:${data.entry}|TP1:${data.tp1}|TP2:${data.tp2}|TP3:${data.tp3}|SL:${data.sl}](${coin})` : "";
             
             // 🖨️ 5. Final Output Message
             const out = `
