@@ -24,14 +24,16 @@ async function getSentimentCached() {
 // ─── Top 5 Setups Scanner ───
 async function getTopDownSetups() {
     let foundSetups = [];
-    const dynamicCoins = await binance.getTopTrendingCoins(30);
+    const dynamicCoins = await binance.getTopTrendingCoins(20);  // 20 is optimal - faster + less API rate limit
 
+    let scanned = 0;
     for (let coin of dynamicCoins) {
         try {
-            await new Promise(resolve => setTimeout(resolve, 200));
+            scanned++;
+            await new Promise(resolve => setTimeout(resolve, 300));  // slightly more delay to avoid rate limit
             const aData = await analyzer.run14FactorAnalysis(coin, '15m');
 
-            if (aData.score >= 10) {  // 10/30 = 33% confluence minimum
+            if (aData.score >= 9) {  // 9/30 = 30% minimum confluence
                 const sent = await getSentimentCached();
                 const sentBias = parseFloat(sent.totalBias) || 0;
                 const sentBonus =
@@ -45,7 +47,7 @@ async function getTopDownSetups() {
                     coin: coin.replace('USDT', ''),
                     type: aData.direction === 'LONG' ? 'LONG 🟢' : 'SHORT 🔴',
                     rawScore: adjustedScore,
-                    score: `${adjustedScore}/30`,
+                    score: `${adjustedScore}/${aData.maxScore}`,
                     price: aData.priceStr,
                     tp1: aData.tp1,
                     tp: aData.tp2,
@@ -54,8 +56,6 @@ async function getTopDownSetups() {
                     reasons: aData.reasons,
                     liquiditySweep: aData.liquiditySweep || 'None',
                     choch: aData.choch || 'None',
-                    supertrend: aData.supertrend ? aData.supertrend.display : '',
-                    rvol: aData.rvol ? aData.rvol.rvol : '?',
                     sentEmoji: sentBonus > 0 ? '📰✅' : sentBonus < 0 ? '📰⚠️' : ''
                 });
             }
@@ -312,7 +312,7 @@ function startSignalScanner(conn, ownerJid) {
             let msg = `🚀 *14-FACTOR AUTO SIGNAL ALERT* 🚀\n_Top ${setups.length} Best Setups Now_\n\n`;
             msg += `🧠 *Market:* ${sent.overallSentiment} | ${sent.fngEmoji} F&G: ${sent.fngValue}\n\n`;
             setups.forEach((s, i) => {
-                msg += `*${i + 1}. #${s.coin}* - ${s.type} (Score: ${s.score} ⭐) ${s.sentEmoji || ''}\n   📍 $${s.price} | ADX: ${s.adx} | RVOL: ${s.rvol || '?'}x\n   ⚡ ${s.supertrend || ''}\n   ✔️ ${s.reasons}\n   🤖 .future ${s.coin} 15m\n\n`;
+                msg += `*${i + 1}. #${s.coin}* - ${s.type} (Score: ${s.score} ⭐) ${s.sentEmoji || ''}\n   📍 $${s.price} | ADX: ${s.adx}\n   ✔️ ${s.reasons}\n   🤖 .future ${s.coin} 15m\n\n`;
             });
             msg += `_⏱️ ඊළඟ Scan - 5min | .set 1 off ගසා Stop කරන්න_`;
 
@@ -341,12 +341,12 @@ async (conn, mek, m, { reply }) => {
             ? "🟢 *Auto Scanner:* ON (.set 1 off ගසා Stop)"
             : "🔴 *Auto Scanner:* OFF (.set 1 on ගසා Start)";
 
-        await reply(`🔍 *MANUAL SCAN ක්‍රියාත්මක වේ...*\n${scanStatus}\n\nTop 30 Coins Scan වෙමින් පවතී... ⏳`);
+        await reply(`🔍 *MANUAL SCAN ක්‍රியාත්මක වේ...*\n${scanStatus}\n\nTop 20 Coins Scan වෙමින් පවතී... ⏳\n_(High quality filter: Volume + Momentum)_`);
 
         const setups = await getTopDownSetups();
 
         if (setups.length === 0) {
-            return await reply(`╔═══════════════════════════╗\n║  🔍 *MANUAL SCAN RESULTS*  ║\n╚═══════════════════════════╝\n\nScore 5/14 ට වඩා ලබාගත් Setups දැනට නොමැත. ⚪\n\nකිසිවේලාවකට පසු නැවත .scan ගසන්න.\n\n${scanStatus}`);
+            return await reply(`╔═══════════════════════════╗\n║  🔍 *MANUAL SCAN RESULTS*  ║\n╚═══════════════════════════╝\n\nScore 9/30 ට වඩා ලබාගත් Setups දැනට නොමැත. ⚪\n\nකිසිවේලාවකට පසු නැවත .scan ගසන්න.\n\n${scanStatus}`);
         }
 
         const sent = await getSentimentCached();

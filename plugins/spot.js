@@ -41,10 +41,9 @@ cmd({
             const entryConf = await confirmations.runAllConfirmations(coin, 'LONG', null);
             
             // 🎯 2. Custom Spot TPs (Fibonacci & Resistance මත පදනම්ව)
-            // ✅ FIX: Use Smart TPs from analyzer (RRR + Fib based), not SMC raw resistance
-            const tp1 = aData.tp1;
-            const tp2 = aData.tp2;
-            const tp3 = aData.tp3;
+            const tp1 = parseFloat(aData.marketSMC.resistance).toFixed(4);
+            const tp2 = parseFloat(aData.marketSMC.ext1618).toFixed(4);
+            const tp3 = parseFloat(aData.marketSMC.ext2618).toFixed(4);
             
             const entryPrice = parseFloat(aData.entryPrice);
             const slPrice = parseFloat(aData.sl);
@@ -78,36 +77,19 @@ cmd({
             
             // 🤖 4. AI Prompt Generation
             const prompt = `Analyze ${coin} SPOT trading. Current: $${aData.priceStr}
-
-=== TECHNICAL (${aData.maxScore}-FACTOR SCORE: ${aData.score}/${aData.maxScore}) ===
-Confluences: ${aData.reasons}
-Market: ${aData.marketState} | Trend: ${aData.mainTrend} | MTF: 4H=${aData.trend4H} 1H=${aData.trend1H}
-ADX: ${aData.adxData.status} | RSI: ${aData.rsi} | VWAP: ${aData.vwap}
-OB Bull: ${aData.marketSMC.bullishOBDisplay} | OB Bear: ${aData.marketSMC.bearishOBDisplay}
-Kill Zone: ${aData.marketSMC.killzone}
-Entry Zone: ${aData.bestEntry.name} | OB Confirmation: ${aData.confirmation.status}
-StochRSI: ${aData.stochRSI.signal} (K:${aData.stochRSI.k}) | BB: ${aData.bbands.signal}
-Smart SL Method: ${aData.slLabel} | TP Methods: ${aData.tp1Label}, ${aData.tp2Label}, ${aData.tp3Label}
-MTF RSI: ${aData.mtfRSI.signal} | Volume Node: ${aData.volNodes.nearHVN ? 'At HVN (good entry)' : 'Not at HVN'}
-Session: ${aData.session.quality} (${aData.session.session}) | Candle Close: ${aData.candleConf.confirmed ? 'CONFIRMED' : 'Pending'}
-EMA Ribbon: ${aData.emaRibbon ? aData.emaRibbon.signal : 'N/A'} | Key S/R: ${aData.keyLevels.display}
-Nearest FVG: ${aData.fvgData.nearest ? '$' + aData.fvgData.nearest.mid + ' ' + aData.fvgData.nearest.direction : 'None'}
-Supertrend: ${aData.supertrend.signal} (${aData.supertrend.supertrendLevel}) ${aData.supertrend.justFlipUp ? '⚡FLIP UP' : ''}
-RVOL: ${aData.rvol.rvol}x (${aData.rvol.signal})
-MTF MACD: ${aData.mtfMACD.signal}
-Liquidity Sweep: ${aData.liquiditySweep} | ChoCH: ${aData.choch}
-Entry Validation: ${aData.entryValidation.warning || 'Entry OK ✅'}
-1H MTF 5m: ${aData.mtf5m.status}
+1H MTF: ${aData.mtf5m.status}
 RRR: ${rrrCheck.reason}
+Session: ${aData.marketSMC.killzone}
+
+DATA: RSI=${aData.rsi} | VWAP=${aData.vwap}
+OB Bull: ${aData.marketSMC.bullishOBDisplay} | ChoCH: ${aData.marketSMC.choch}
+Entry Zone: ${aData.bestEntry.name} | Order: ${aData.orderSuggestion.type}
+Confirmation: ${aData.confirmation.status}
 
 EXACT MATH: entry:"${aData.entryPrice}", tp1:"${tp1}", tp2:"${tp2}", tp3:"${tp3}", sl:"${aData.sl}", rrr:"1:${rrrStr}", allocation:"${allocText}", riskAmt:"${riskText}"
 
 ${settings.strictMode ? 'Output WAIT if low confidence or bad setup.' : 'Output signal with warnings if needed.'}
-Sinhala explanation (max 80 chars per field). Keep RSI/VWAP/OB in English.
-
-STRICT OUTPUT RULES:
-- Return ONLY a single JSON object, nothing else, NO markdown, NO backticks
-- All string values: NO newlines, NO unescaped quotes inside strings
+Sinhala explanation. Keep RSI/VWAP/OB in English.
 
 JSON only:
 {"direction":"BUY or WAIT","emoji":"🟢 or ⚪","entry":"${aData.entryPrice}","tp1":"${tp1}","tp2":"${tp2}","tp3":"${tp3}","sl":"${aData.sl}","rrr":"1:${rrrStr}","allocation":"${allocText}","riskAmt":"${riskText}","confidence":"XX%","trend":"sinhala","smc_summary":"sinhala"}`;
@@ -168,12 +150,6 @@ JSON only:
             const trackMsg = data.direction !== "WAIT" ? `\n📌 Track: .track reply\n[TARGETS|ENTRY:${data.entry}|TP:${data.tp2}|SL:${data.sl}](${coin})` : "";
             
             // 🖨️ 5. Final Output Message
-            const sessionWarnSpot = aData.session.quality === 'AVOID' ?
-                "\n🔴 *OFF-HOURS* - Very low volume. Avoid new entries." :
-                aData.session.quality === 'CAUTION' ?
-                "\n⚠️ *ASIAN SESSION* - Low volume, fakeout risk." :
-                "";
-            
             const out = `
 ╔═══════════════════════════╗
 ║  🟢 *PRO SPOT ANALYSIS* ║
@@ -181,16 +157,16 @@ JSON only:
 
 🪙 ${coin.replace('USDT','')} / USDT  💵 $${aData.priceStr}
 📌 *Trade Style:* ${tradeCategory}
-📊 *Score:* ${aData.score}/${aData.maxScore} ⭐
-⏱️ ${aData.marketSMC.killzone}${asianWarn}${sessionWarnSpot}
+⏱️ ${aData.marketSMC.killzone}${asianWarn}
 
-━━━━━━━━━━━━━━━━━━
-*🎯 TRADE SETUP*
-━━━━━━━━━━━━━━━━━━
+*🔬 1H MTF Confirmation:*
+${aData.mtf5m.status}
+
 *🎯 Smart Entry* ${data.emoji} ${data.direction}
 🏹 Zone: ${aData.bestEntry.name}
 📍 Entry: $${data.entry}
-📋 Order: ${aData.orderSuggestion.type} — ${aData.orderSuggestion.reason}
+📋 Order: ${aData.orderSuggestion.type}
+   ${aData.orderSuggestion.reason}
 🔔 ${aData.confirmation.status}
 
 🎯 *Take Profits:*
@@ -200,34 +176,12 @@ JSON only:
 🛡️ SL (${aData.slLabel}): $${data.sl}
 
 *⚖️ Risk Management (2% Rule)*
-⚖️ RRR: ${data.rrr} ${rrrCheck.pass ? '✅' : '⚠️'}
+RRR: ${data.rrr} ${rrrCheck.pass ? '✅' : '⚠️'}
 💰 Investment: ${data.allocation}
 🛡️ Max Risk:   ${data.riskAmt}
 🔥 Confidence: ${data.confidence}
 
-━━━━━━━━━━━━━━━━━━
-*📊 TECHNICAL (Score: ${aData.score}/${aData.maxScore})*
-━━━━━━━━━━━━━━━━━━
-✔️ ${aData.reasons}
-
-*MTF Trend:*  4H=${aData.trend4H} | 1H=${aData.trend1H}
-📊 StochRSI:  ${aData.stochRSI.signal} (K:${aData.stochRSI.k})
-📉 Bollinger: ${aData.bbands.signal} | %B: ${aData.bbands.percentB}%${aData.bbands.squeeze ? '\n⚡ *BB SQUEEZE* - Breakout imminent!' : ''}
-📈 MTF RSI:   ${aData.mtfRSI.display}
-📦 Volume:    ${aData.volNodes.display}
-🕯️ Candle:    ${aData.candleConf.display}${aData.mtfOB.confluenceZone ? '\n🔥 *MTF OB:* ' + aData.mtfOB.confluenceZone.display : ''}${aData.liquiditySweep !== 'None' ? '\n💧 *Liq Sweep:* ' + aData.liquiditySweep : ''}${aData.choch !== 'None' ? '\n🔄 *ChoCH:* ' + aData.choch : ''}
-${aData.emaRibbon ? '📊 *EMA Ribbon:* ' + aData.emaRibbon.display : ''}
-📍 *Key S/R:* ${aData.keyLevels.display}${aData.fvgData.nearest ? '\n🎯 *Nearest FVG:* $' + aData.fvgData.nearest.mid + ' (' + aData.fvgData.nearest.direction + ')' : ''}
-⚡ *Supertrend:* ${aData.supertrend.display}
-📊 *RVOL:* ${aData.rvol.display}
-📈 *MTF MACD:* ${aData.mtfMACD.display}
-
-*🔬 5m MTF:*
-${aData.mtf5m.status}
-
-━━━━━━━━━━━━━━━━━━
-*💡 AI Analysis:*
-━━━━━━━━━━━━━━━━━━
+*📊 Analysis:*
 ${data.trend}
 ${data.smc_summary}${zoneWarn}${rrrWarnMsg}
 

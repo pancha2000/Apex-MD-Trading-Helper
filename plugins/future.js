@@ -56,7 +56,7 @@ async (conn, mek, m, { reply, args }) => {
         const rrrVal = riskAmount > 0 ? (Math.abs(parseFloat(aData.tp2) - parseFloat(aData.entryPrice)) / riskAmount) : 0;
         const rrrStr = rrrVal.toFixed(2);
 
-        if (settings.strictMode && aData.score < 8 && !aData.isTrueChoppy) {  // 8/27 = ~30% min threshold
+        if (settings.strictMode && aData.score < 5 && !aData.isTrueChoppy) {
             return await reply(`⛔ *TRADE REJECTED - Strict Mode* ⛔\n🪙 ${coin} | ${aData.direction}\n⭐ Score: ${aData.score}/${aData.maxScore}\n❌ *හේතුව:* Confluence Score එක ඉතා අඩුයි.`);
         }
 
