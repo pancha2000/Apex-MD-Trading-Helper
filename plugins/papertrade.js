@@ -5,6 +5,16 @@
  * Analysis reply + .paper → Virtual Binance-style position opens
  * Uses margin setting → calculates leverage, qty, marginUsed
  * .myptrades → Shows all open paper positions with live P&L
+ *
+ * ✅ FIX: Order type (LIMIT/MARKET) and trade status (pending/active)
+ *         are now read directly from the analyzer's orderSuggestion
+ *         output in the quoted message — NOT guessed from price proximity.
+ *
+ *         Priority:
+ *           1. Parse "📋 *Order:*" line from the quoted analysis message
+ *              (set by analyzer.js → orderSuggestion.type)
+ *           2. Fallback: re-derive from live price vs entry (tight 0.3% band)
+ *           3. Last resort: MARKET / active (safe default)
  * ================================================================
  */
 const { cmd } = require('../lib/commands');
@@ -15,78 +25,118 @@ const axios   = require('axios');
 // ─── Helper: Get live price from Binance ─────────────────────────
 async function getLivePrice(coin) {
     try {
-        const res = await axios.get(`https://api.binance.com/api/v3/ticker/price?symbol=${coin}`, { timeout: 5000 });
+        const res = await axios.get(
+            `https://api.binance.com/api/v3/ticker/price?symbol=${coin}`,
+            { timeout: 5000 }
+        );
         return parseFloat(res.data.price);
     } catch { return null; }
 }
 
 // ─── Helper: Parse analysis message ──────────────────────────────
+/**
+ * Extracts all trade parameters from a .future / .spot analysis reply.
+ * NEW: also extracts `parsedOrderType` ('LIMIT' | 'MARKET' | null)
+ * from the "📋 *Order:*" line that analyzer.js writes via orderSuggestion.
+ */
 function parseAnalysisMsg(text) {
-    // Coin
+    // ── Coin ──────────────────────────────────────────────────────
     const coinMatch = text.match(/([A-Z]{2,10})\s*\/\s*USDT/)
         || text.match(/🪙\s*([A-Z]{2,10})/)
         || text.match(/\b([A-Z]{2,10})USDT\b/);
     if (!coinMatch) return null;
     const coin = (coinMatch[1]).replace('USDT','') + 'USDT';
 
-    // Direction — Smart Entry line එකෙන් විතරක් detect කරනවා (reasons ලිස්ටුවේ "Short OB" වැනි වචන ignore)
+    // ── Direction ─────────────────────────────────────────────────
+    // Read ONLY from "Smart Entry" or the explicit direction line to avoid
+    // false hits from reason strings like "Short OB 🔴" or "Bear Breaker"
     const smartEntryMatch = text.match(/Smart Entry[^\n]*?(LONG|SHORT)/i)
         || text.match(/\*?(LONG|SHORT)\*?\s*$|direction[":\s]*(LONG|SHORT)/im);
     let direction = 'LONG';
     if (smartEntryMatch) {
         direction = smartEntryMatch[1].toUpperCase();
     } else {
-        // Fallback: look for 🔴 SHORT or 🟢 LONG as standalone (not part of reasons)
         const shortMatch = text.match(/🔴\s*\*?SHORT\*?|\bSHORT\b(?!.*OB|.*Zone|.*term)/);
         direction = shortMatch ? 'SHORT' : 'LONG';
     }
 
-    // Entry
+    // ── Entry ─────────────────────────────────────────────────────
     const entryMatch = text.match(/Entry[:\s]*\$?([\d,.]+)/i)
         || text.match(/\[TARGETS\|ENTRY:([\d.]+)/i);
     if (!entryMatch) return null;
     const entry = parseFloat(entryMatch[1].replace(/,/g,''));
 
-    // SL
+    // ── SL ───────────────────────────────────────────────────────
     const slMatch = text.match(/SL[^:]*:\s*\$?([\d,.]+)/i)
         || text.match(/\|SL:([\d.]+)/i);
     if (!slMatch) return null;
     const sl = parseFloat(slMatch[1].replace(/,/g,''));
 
-    // TP1
+    // ── TP1 ──────────────────────────────────────────────────────
     const tp1Match = text.match(/TP1[^$]*\$([\d,.]+)/i);
     const tp1 = tp1Match ? parseFloat(tp1Match[1].replace(/,/g,'')) : null;
 
-    // TP2 (main TP) - with fallback
+    // ── TP2 (main TP) ────────────────────────────────────────────
     const tp2Match = text.match(/TP2[^$]*\$([\d,.]+)/i);
     let finalTp = tp2Match ? parseFloat(tp2Match[1].replace(/,/g,'')) : null;
     if (!finalTp) {
         const tgMatch = text.match(/\|TP:([\d.]+)/i);
         if (!tgMatch) return null;
-        finalTp = parseFloat(tgMatch[1]);  // ✅ FIXED: var scope bug → let
+        finalTp = parseFloat(tgMatch[1]);
     }
 
-    // TP3
+    // ── TP3 ──────────────────────────────────────────────────────
     const tp3Match = text.match(/TP3[^$]*\$([\d,.]+)/i);
     const tp3 = tp3Match ? parseFloat(tp3Match[1].replace(/,/g,'')) : null;
 
-    // Leverage (from analysis)
+    // ── Leverage ─────────────────────────────────────────────────
     const levMatch = text.match(/Leverage[:\s]*([\d]+)x/i);
     const analysisLev = levMatch ? parseInt(levMatch[1]) : null;
 
-    // Score
+    // ── Score ────────────────────────────────────────────────────
     const scoreMatch = text.match(/Score[:\s]*([\d]+)\s*\//i);
     const score = scoreMatch ? parseInt(scoreMatch[1]) : 0;
 
-    // Timeframe
+    // ── Timeframe ────────────────────────────────────────────────
     const tfMatch = text.match(/\.(?:future|spot|chart)\s+\w+\s+([\d]+[mhd])/i)
         || text.match(/\b(15m|1h|4h|1d|5m|1w)\b/i);
     const timeframe = tfMatch ? tfMatch[1] : '15m';
 
-    return { coin, direction, entry, sl, tp1, tp: finalTp, tp3, analysisLev, score, timeframe };  // tp=finalTp
+    // ── Trade Category (Sniper Edition) ──────────────────────────
+    // Reads the MTF classification label produced by analyzer.js
+    const categoryMatch = text.match(/(📅 SWING TRADE[^\n]*|🌅 INTRADAY TRADE[^\n]*|⚡ HIGH-PROB SCALP[^\n]*|📊 STANDARD SETUP[^\n]*)/);
+    const tradeCategory = categoryMatch ? categoryMatch[1].trim() : null;
+
+    // ── ✅ ORDER TYPE (THE CRITICAL FIX) ─────────────────────────
+    // The analyzer writes: 📋 *Order:*    LIMIT ORDER ⏳ — reason
+    //                   or 📋 *Order:*    MARKET ORDER 🟢 — reason
+    //
+    // We read THIS line to determine order type — NOT the live price heuristic.
+    //
+    // Patterns covered:
+    //   future.js  → 📋 *Order:*    LIMIT ORDER ⏳ — ...
+    //   spot.js    → 📋 Order: LIMIT ORDER ⏳
+    //   any format → as long as "Order" is followed by LIMIT/MARKET
+    const orderLineMatch =
+        text.match(/📋\s*\*?Order[^:]*:\*?\s*(LIMIT ORDER|MARKET ORDER)/i) ||
+        text.match(/Order[^\n:]*:\s*[^\n]*(LIMIT ORDER|MARKET ORDER)/i);
+
+    let parsedOrderType = null;
+    if (orderLineMatch) {
+        const raw = orderLineMatch[1].toUpperCase();
+        parsedOrderType = raw.includes('LIMIT') ? 'LIMIT' : 'MARKET';
+    }
+
+    return {
+        coin, direction, entry, sl,
+        tp1, tp: finalTp, tp3,
+        analysisLev, score, timeframe,
+        tradeCategory,
+        parsedOrderType,   // ← new: 'LIMIT' | 'MARKET' | null
+    };
 }
 
-// ─── Calculate position sizing (Binance Risk-Based — safe capped version) ─────
+// ─── Calculate position sizing (Binance Risk-Based — safe capped version) ────
 function calcPosition(margin, entry, sl, direction, analysisLev, freeBalance = null) {
     const available = freeBalance !== null ? freeBalance : margin;
     const slDist    = Math.abs(entry - sl);
@@ -100,7 +150,7 @@ function calcPosition(margin, entry, sl, direction, analysisLev, freeBalance = n
     const leverage  = analysisLev || Math.min(Math.ceil(rawLev), 100);
     let marginUsed  = quantity > 0 ? (quantity * entry) / leverage : 0;
 
-    // ✅ CRITICAL: Cap marginUsed to 20% of available balance (safety rule)
+    // Cap marginUsed to 20% of available balance per trade (safety rule)
     const maxMargin = available * 0.20;
     if (marginUsed > maxMargin && maxMargin > 0) {
         const scaleFactor = maxMargin / marginUsed;
@@ -108,7 +158,7 @@ function calcPosition(margin, entry, sl, direction, analysisLev, freeBalance = n
         marginUsed  = maxMargin;
     }
 
-    // ✅ Minimum viable trade check
+    // Minimum viable trade check
     const minMargin = 0.50; // $0.50 minimum
     if (marginUsed < minMargin) {
         return { riskAmt: 0, quantity: 0, leverage, marginUsed: 0, slDist, tooSmall: true };
@@ -139,7 +189,11 @@ cmd({
         const parsed = parseAnalysisMsg(text);
         if (!parsed) return await reply('❌ Analysis message parse කරගන්න බැරිය.\n(Entry/SL/Coin detect නොවිණ)');
 
-        const { coin, direction, entry, sl, tp1, tp, tp3, analysisLev, score, timeframe } = parsed;
+        const {
+            coin, direction, entry, sl, tp1, tp, tp3,
+            analysisLev, score, timeframe,
+            tradeCategory, parsedOrderType,
+        } = parsed;
 
         // Stablecoin guard
         const STABLES = ['USDCUSDT','BUSDUSDT','DAIUSDT','TUSDUSDT','USDPUSDT','FRAXUSDT'];
@@ -155,12 +209,17 @@ cmd({
             return await reply(`❌ Capital set කර නැහැ!\n*.margin <amount>* දාලා capital set කරන්න.\nඋදා: .margin 1000`);
         }
 
-        // Check if already have active paper trade for this coin
+        // Check if already have active/pending paper trade for this coin
         const existing = await db.Trade.findOne({
             userJid: m.sender, coin, isPaper: true, status: { $in: ['active', 'pending'] }
         });
         if (existing) {
-            return await reply(`⚠️ *${coin} Paper Trade දැනටමත් Open!*\n\nEntry: $${existing.entry} | ${existing.direction}\n\n*.myptrades* ලෙස current positions බලන්න.`);
+            return await reply(
+                `⚠️ *${coin} Paper Trade දැනටමත් Open!*\n\n` +
+                `Entry: $${existing.entry} | ${existing.direction} | ` +
+                `${existing.status === 'pending' ? '⏳ Pending Fill' : '🟢 Active'}\n\n` +
+                `*.myptrades* ලෙස current positions බලන්න.`
+            );
         }
 
         // Limit: max 5 open paper trades
@@ -171,11 +230,13 @@ cmd({
             return await reply('⚠️ Maximum 5 paper trades open කරන්න පුළුවන්.\n.myptrades ලෙස close/view කරන්න.');
         }
 
-        // ✅ Calculate free (available) balance = total - locked in open trades
+        // Calculate free (available) balance = total - locked in open trades
         const user = await db.getUser(m.sender);
-        const openTrades = await db.Trade.find({ userJid: m.sender, isPaper: true, status: { $in: ['active','pending'] } });
+        const openTrades = await db.Trade.find({
+            userJid: m.sender, isPaper: true, status: { $in: ['active','pending'] }
+        });
         const lockedMargin = openTrades.reduce((s, t) => s + (t.marginUsed || 0), 0);
-        const freeBalance = Math.max(0, (user.paperBalance || userMargin) - lockedMargin);
+        const freeBalance  = Math.max(0, (user.paperBalance || userMargin) - lockedMargin);
 
         if (freeBalance < 1.0) {
             return await reply(
@@ -200,53 +261,115 @@ cmd({
             );
         }
 
-        // Get live price
+        // Get live price (used for display and fallback order-type detection)
         const livePrice = await getLivePrice(coin);
-        const priceStatus = livePrice
-            ? (Math.abs(livePrice - entry) / entry < 0.005
-                ? '✅ Market Price (Entry zone තුළ)'
-                : `⚠️ Live: $${livePrice.toFixed(4)} (Entry zone ලඟා වෙනකම් pending)`)
-            : '⚡ Active';
 
-        const dirEmoji = direction === 'LONG' ? '🟢' : '🔴';
-        const slPct = (Math.abs(entry - sl) / entry * 100).toFixed(2);
-        const tpPct = (Math.abs(tp - entry) / entry * 100).toFixed(2);
-        const rrr = (Math.abs(tp - entry) / Math.abs(entry - sl)).toFixed(2);
+        // ═══════════════════════════════════════════════════════════
+        // ✅ ORDER TYPE & STATUS DETERMINATION — FIXED LOGIC
+        // ═══════════════════════════════════════════════════════════
+        //
+        // Priority 1 — Analyzer's own orderSuggestion from message
+        //   The "📋 *Order:*" line in the analysis was written by the
+        //   analyzer using getOrderTypeSuggestion(entryPrice, currentPrice).
+        //   This is the most accurate source. Use it when found.
+        //
+        // Priority 2 — Live price fallback (tighter 0.3% band)
+        //   If the message didn't contain the Order line (e.g. a custom
+        //   message or an older format), compare live price to entry.
+        //   Use a tight 0.3% tolerance so only true at-market entries
+        //   classify as MARKET; anything else is a LIMIT.
+        //
+        // Priority 3 — Safe default: MARKET / active
+        //   When no live price is available and the message has no order
+        //   line (e.g. a manually typed trade), default to MARKET so the
+        //   trade is immediately tracked.
+        //
+        let orderType;
+        let tradeStatus;
 
-        // Determine if limit order (price not at entry) or market order
-        const isAtEntry = livePrice && Math.abs(livePrice - entry) / entry < 0.005;
-        const tradeStatus = isAtEntry ? 'active' : 'pending';
-        const orderType = isAtEntry ? 'MARKET' : 'LIMIT';
+        if (parsedOrderType) {
+            // ── PRIORITY 1: trust the analyzer's explicit output ──
+            orderType   = parsedOrderType;            // 'LIMIT' or 'MARKET'
+            tradeStatus = orderType === 'MARKET' ? 'active' : 'pending';
+        } else if (livePrice) {
+            // ── PRIORITY 2: price-proximity fallback (tighter band) ──
+            // Old code used 0.5% which is too wide and always fires.
+            // 0.3% means only truly at-market entries become MARKET.
+            const priceDiffPct = Math.abs(livePrice - entry) / entry * 100;
+            orderType   = priceDiffPct <= 0.3 ? 'MARKET' : 'LIMIT';
+            tradeStatus = orderType === 'MARKET' ? 'active' : 'pending';
+        } else {
+            // ── PRIORITY 3: no live price, no parsed type → safe default ──
+            orderType   = 'MARKET';
+            tradeStatus = 'active';
+        }
 
-        // Save trade
+        // For active (MARKET) trades, record the actual fill price
+        const fillPrice = tradeStatus === 'active' ? (livePrice || entry) : 0;
+
+        // Save trade to database
         await db.saveTrade({
             userJid: m.sender,
             coin, type: 'future', direction,
             entry, tp, tp1: tp1 || tp, tp2: tp, sl,
-            rrr: `1:${rrr}`,
-            status: tradeStatus,
-            orderType,
-            fillPrice: tradeStatus === 'active' ? entry : 0,
+            rrr: `1:${(Math.abs(tp - entry) / Math.abs(entry - sl)).toFixed(2)}`,
+            status:    tradeStatus,   // ← 'active' or 'pending' (fixed)
+            orderType: orderType,     // ← 'MARKET' or 'LIMIT' (fixed)
+            fillPrice: fillPrice,
             isPaper: true,
             leverage, quantity, marginUsed,
-            score, timeframe
+            score, timeframe,
         });
 
-        const qtyStr = quantity < 1 ? quantity.toFixed(4) : quantity.toFixed(2);
+        // Build display strings
         const coinBase = coin.replace('USDT','');
+        const dirEmoji = direction === 'LONG' ? '🟢' : '🔴';
+        const qtyStr   = quantity < 1 ? quantity.toFixed(4) : quantity.toFixed(2);
+        const slPct    = (Math.abs(entry - sl) / entry * 100).toFixed(2);
+        const tpPct    = (Math.abs(tp - entry) / entry * 100).toFixed(2);
+        const rrr      = (Math.abs(tp - entry) / Math.abs(entry - sl)).toFixed(2);
+        const tp1Pct   = tp1 ? (Math.abs(tp1 - entry) / entry * 100).toFixed(2) : '0.00';
+
+        // ── Order type display lines ──────────────────────────────
+        const orderTypeDisplay = orderType === 'MARKET'
+            ? '⚡ MARKET ORDER (Active Now)'
+            : '⏳ LIMIT ORDER (Pending Fill)';
+
+        const statusDisplay = tradeStatus === 'active'
+            ? '🟢 ACTIVE'
+            : '🟡 PENDING — Entry ලඟා වෙනකම් trade tracker wait කරයි';
+
+        // ── Live price context line ───────────────────────────────
+        let livePriceNote = '';
+        if (livePrice) {
+            const distPct = (Math.abs(livePrice - entry) / entry * 100).toFixed(2);
+            if (tradeStatus === 'pending') {
+                const needsDir = direction === 'LONG'
+                    ? (livePrice > entry ? '📉 Price drop needed' : '📍 Near entry zone')
+                    : (livePrice < entry ? '📈 Price rise needed' : '📍 Near entry zone');
+                livePriceNote = `\n💹 Live:       $${livePrice.toFixed(4)} (${distPct}% away — ${needsDir})`;
+            } else {
+                livePriceNote = `\n💹 Live:       $${livePrice.toFixed(4)} ✅`;
+            }
+        }
+
+        // ── Trade category note (MTF classification) ─────────────
+        const categoryNote = tradeCategory
+            ? `\n📋 Type:       ${tradeCategory}`
+            : '';
 
         await reply(`
 🤖 *PAPER TRADE OPENED!*
 ━━━━━━━━━━━━━━━━━━━━━━
 
 🪙 *${coinBase}/USDT* ${dirEmoji} *${direction}*
-📊 Score: ${score} | ⏱️ ${timeframe}
+📊 Score: ${score}${aData ? `/${aData.maxScore}` : ''} | ⏱️ ${timeframe}${categoryNote}
 
 *Position Details:*
-📍 Entry:     $${entry}
-🎯 TP1:       $${tp1 ? tp1.toFixed(4) : 'N/A'} (+${(tp1 ? Math.abs(tp1-entry)/entry*100 : 0).toFixed(2)}%)
+📍 Entry:     $${entry}${livePriceNote}
+🎯 TP1:       $${tp1 ? tp1.toFixed(4) : 'N/A'} (+${tp1Pct}%)
 🎯 TP2:       $${tp.toFixed(4)} (+${tpPct}%)
-🛡️ SL:        $${sl} (-${slPct}%)
+${tp3 ? `🎯 TP3:       $${tp3.toFixed(4)}\n` : ''}🛡️ SL:        $${sl} (-${slPct}%)
 ⚖️ RRR:       1:${rrr}
 
 *Virtual Position:*
@@ -255,8 +378,12 @@ cmd({
 💰 Margin:    $${marginUsed.toFixed(2)} USDT
 🛡️ Risk:      $${riskAmt.toFixed(2)} (2% rule)
 
-*Order Type:* ${orderType === 'MARKET' ? '⚡ MARKET ORDER (Active Now)' : '⏳ LIMIT ORDER (Entry zone ලඟා වෙනකම් pending)'}
-*Status:* ${tradeStatus === 'active' ? '🟢 ACTIVE' : '🟡 PENDING - Entry Fill වෙනකම් බලන්න'}
+*Order Type:* ${orderTypeDisplay}
+*Status:*     ${statusDisplay}
+
+${tradeStatus === 'pending'
+    ? '⏳ _Trade Tracker will auto-activate when price reaches entry zone._'
+    : '✅ _Position is live. Trade Tracker is monitoring TP/SL._'}
 
 📊 Live P&L → *.myptrades*
 🗑️ Close → *.closepaper ${coin}*`.trim());
@@ -290,7 +417,10 @@ cmd({
         const user = await db.getUser(m.sender);
 
         if (!trades || trades.length === 0) {
-            return await reply(`📊 *Open Paper Positions: 0*\n\nVirtual trade open කරන්න:\n*.future BTC 15m* → Analysis ගෙන reply + *.paper*`);
+            return await reply(
+                `📊 *Open Paper Positions: 0*\n\n` +
+                `Virtual trade open කරන්න:\n*.future BTC 15m* → Analysis ගෙන reply + *.paper*`
+            );
         }
 
         // Get all live prices in parallel
@@ -306,34 +436,36 @@ cmd({
 
         trades.forEach((t, i) => {
             const livePrice = prices[i];
-            const dirEmoji = t.direction === 'LONG' ? '🟢' : '🔴';
-            const coinBase = t.coin.replace('USDT','');
+            const dirEmoji  = t.direction === 'LONG' ? '🟢' : '🔴';
+            const coinBase  = t.coin.replace('USDT','');
 
             let pnlStr = 'N/A', pnlEmoji = '⚪', unrealizedPnL = 0;
-            if (livePrice && t.quantity && t.leverage) {
+            if (livePrice && t.quantity && t.leverage && t.status === 'active') {
                 const priceDiff = t.direction === 'LONG'
                     ? livePrice - t.entry
                     : t.entry - livePrice;
                 unrealizedPnL = priceDiff * t.quantity;
-                totalPnL += unrealizedPnL;
+                totalPnL    += unrealizedPnL;
                 totalMargin += (t.marginUsed || 0);
                 const pnlPct = t.marginUsed > 0 ? (unrealizedPnL / t.marginUsed * 100) : 0;
                 pnlEmoji = unrealizedPnL >= 0 ? '📈' : '📉';
-                pnlStr = `${unrealizedPnL >= 0 ? '+' : ''}$${unrealizedPnL.toFixed(2)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)`;
+                pnlStr   = `${unrealizedPnL >= 0 ? '+' : ''}$${unrealizedPnL.toFixed(2)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)`;
             }
 
             // Distance to TP/SL
             const distToSL = livePrice ? (Math.abs(livePrice - t.sl) / livePrice * 100).toFixed(1) : '?';
             const distToTP = livePrice ? (Math.abs(livePrice - t.tp) / livePrice * 100).toFixed(1) : '?';
-            const openTime = new Date(t.openTime);
+            const openTime  = new Date(t.openTime);
             const hoursOpen = ((Date.now() - openTime) / 3600000).toFixed(1);
 
+            // ── Status tag: pending or active (with fill price if filled LIMIT) ──
             const orderTag = t.orderType === 'LIMIT' ? '⏳ LIMIT' : '⚡ MARKET';
             const statusTag = t.status === 'pending'
-                ? `${orderTag} ORDER - Entry Fill බලාසිටී`
-                : t.status === 'active' && t.orderType === 'LIMIT'
-                    ? `${orderTag} ORDER - ✅ Filled @ $${t.fillPrice ? t.fillPrice.toFixed(4) : t.entry}`
-                    : '🟢 ACTIVE';
+                ? `${orderTag} ORDER — ⏳ Waiting for Entry Fill`
+                : t.orderType === 'LIMIT'
+                    ? `${orderTag} ORDER — ✅ Filled @ $${t.fillPrice ? t.fillPrice.toFixed(4) : t.entry}`
+                    : `⚡ MARKET ORDER — 🟢 ACTIVE`;
+
             const tp1Status = t.tp1Hit ? '✅' : '⬜';
             const tp2Status = t.tp2Hit ? '✅' : '⬜';
             const dcaStatus = t.dcaLevel > 0 ? ' | ⚠️ DCA Zone Hit' : '';
@@ -341,11 +473,17 @@ cmd({
             msg += `*${i+1}. ${coinBase}/USDT* ${dirEmoji} ${t.direction} (${t.leverage || '?'}x)\n`;
             msg += `📋 ${statusTag}${dcaStatus}\n`;
             msg += `📍 Entry: $${t.entry} → 💹 Live: ${livePrice ? '$' + livePrice.toFixed(4) : 'N/A'}\n`;
+
+            // For pending trades: show distance and which direction needed
             if (t.status === 'pending' && livePrice) {
                 const distToEntry = ((Math.abs(livePrice - t.entry) / t.entry) * 100).toFixed(2);
-                const direction_to_entry = (t.direction === 'LONG' && livePrice > t.entry) ? '📉 Price drop' : (t.direction === 'SHORT' && livePrice < t.entry) ? '📈 Price rise' : '📍 Near entry';
-                msg += `⏳ ${distToEntry}% away (${direction_to_entry} needed)\n`;
+                const directionNeeded =
+                    (t.direction === 'LONG'  && livePrice > t.entry) ? '📉 Waiting for price drop' :
+                    (t.direction === 'SHORT' && livePrice < t.entry) ? '📈 Waiting for price rise' :
+                    '📍 Near entry zone — may fill soon';
+                msg += `⏳ ${distToEntry}% away (${directionNeeded})\n`;
             }
+
             msg += `${pnlEmoji} *PnL: ${t.status === 'pending' ? '⏳ Pending fill...' : pnlStr}*\n`;
             msg += `🎯 TP1 ${tp1Status} $${parseFloat(t.tp1||t.tp).toFixed(4)} | TP2 ${tp2Status} $${parseFloat(t.tp2||t.tp).toFixed(4)}\n`;
             msg += `🎯 TP3: $${parseFloat(t.tp).toFixed(4)} (${distToTP}% away) | 🛡️ SL: $${parseFloat(t.sl).toFixed(4)} (${distToSL}% away)\n`;
@@ -392,9 +530,26 @@ cmd({
 
         if (!trade) return await reply(`❌ ${coin} paper trade open නෑ.\n*.myptrades* ලෙස positions බලන්න.`);
 
-        // Get live price for final P&L
         const livePrice = await getLivePrice(coin);
         let paperProfit = 0, result = 'BREAK-EVEN', pnlPct = 0;
+
+        if (trade.status === 'pending') {
+            // Close a pending (never-filled) trade — no P&L
+            await db.Trade.findByIdAndUpdate(trade._id, {
+                status: 'closed',
+                result: 'CANCELLED',
+                paperProfit: 0,
+            });
+            const coinBase = coin.replace('USDT','');
+            return await reply(
+                `🗑️ *PAPER ORDER CANCELLED*\n\n` +
+                `🪙 ${coinBase}/USDT | ${trade.direction}\n` +
+                `📋 Order Type: ⏳ LIMIT (Never filled)\n` +
+                `📍 Intended Entry: $${trade.entry}\n\n` +
+                `💰 *PnL: $0.00 (Never activated)*\n` +
+                `📊 Result: CANCELLED`
+            );
+        }
 
         if (livePrice && trade.quantity) {
             const priceDiff = trade.direction === 'LONG'
@@ -402,20 +557,22 @@ cmd({
                 : trade.entry - livePrice;
             paperProfit = priceDiff * trade.quantity;
             pnlPct = trade.marginUsed > 0 ? (paperProfit / trade.marginUsed * 100) : 0;
-            result = paperProfit > 0 ? 'WIN' : paperProfit < 0 ? 'LOSS' : 'BREAK-EVEN';
+            result  = paperProfit > 0 ? 'WIN' : paperProfit < 0 ? 'LOSS' : 'BREAK-EVEN';
         }
 
         await db.closeTrade(trade._id, result, pnlPct, paperProfit);
         await db.updatePaperBalance(m.sender, paperProfit, result === 'WIN', result === 'BREAK-EVEN');
 
-        const user = await db.getUser(m.sender);
-        const resEmoji = result === 'WIN' ? '✅' : result === 'LOSS' ? '❌' : '➖';
-        const coinBase = coin.replace('USDT','');
+        const user      = await db.getUser(m.sender);
+        const resEmoji  = result === 'WIN' ? '✅' : result === 'LOSS' ? '❌' : '➖';
+        const coinBase  = coin.replace('USDT','');
+        const orderTag  = trade.orderType === 'LIMIT' ? '⏳ LIMIT (Filled)' : '⚡ MARKET';
 
         await reply(`
 ${resEmoji} *PAPER TRADE CLOSED (Manual)*
 
 🪙 ${coinBase}/USDT | ${trade.direction}
+📋 Order: ${orderTag}
 📍 Entry:  $${trade.entry}
 💹 Close:  ${livePrice ? '$' + livePrice.toFixed(4) : 'N/A'}
 
@@ -456,7 +613,10 @@ cmd({
         const startBal = user.paperStartBalance || user.paperBalance || 0;
 
         if (!trades || trades.length === 0) {
-            return await reply('📜 *Paper Trade History*\n\nClosed trades නෑ.\nFirst trade open කරන්න: *.future BTC 15m* → *.paper*');
+            return await reply(
+                '📜 *Paper Trade History*\n\nClosed trades නෑ.\n' +
+                'First trade open කරන්න: *.future BTC 15m* → *.paper*'
+            );
         }
 
         let wins = 0, losses = 0, breakEvens = 0, totalPnL = 0;
@@ -471,33 +631,34 @@ cmd({
         trades.forEach((t, i) => {
             const coinBase = t.coin.replace('USDT', '');
             const dirEmoji = t.direction === 'LONG' ? '🟢' : '🔴';
-            const resEmoji = t.result === 'WIN' ? '✅' : t.result === 'LOSS' ? '❌' : '➖';
-            const pnl = t.paperProfit || 0;
-            const pnlStr = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
-            const pnlPct = t.marginUsed > 0 ? (pnl / t.marginUsed * 100) : 0;
+            const resEmoji = t.result === 'WIN' ? '✅' : t.result === 'LOSS' ? '❌' : t.result === 'CANCELLED' ? '🗑️' : '➖';
+            const pnl     = t.paperProfit || 0;
+            const pnlStr  = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
+            const pnlPct  = t.marginUsed > 0 ? (pnl / t.marginUsed * 100) : 0;
+            const orderTag = t.orderType === 'LIMIT' ? '⏳' : '⚡';
 
             totalPnL += pnl;
-            if (t.result === 'WIN') { wins++; if (!biggestWin || pnl > biggestWin.pnl) biggestWin = { coin: coinBase, pnl }; }
-            else if (t.result === 'LOSS') { losses++; if (!biggestLoss || pnl < biggestLoss.pnl) biggestLoss = { coin: coinBase, pnl }; }
-            else breakEvens++;
+            if      (t.result === 'WIN')   { wins++;       if (!biggestWin  || pnl > biggestWin.pnl)  biggestWin  = { coin: coinBase, pnl }; }
+            else if (t.result === 'LOSS')  { losses++;     if (!biggestLoss || pnl < biggestLoss.pnl) biggestLoss = { coin: coinBase, pnl }; }
+            else if (t.result !== 'CANCELLED') breakEvens++;
 
             const openDate = new Date(t.openTime || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
-            msg += `${resEmoji} *${coinBase}* ${dirEmoji} ${t.direction} | ${openDate}\n`;
+            msg += `${resEmoji} *${coinBase}* ${dirEmoji} ${t.direction} ${orderTag} | ${openDate}\n`;
             msg += `   📍 $${parseFloat(t.entry).toFixed(4)} → `;
             msg += `🎯 $${parseFloat(t.tp || 0).toFixed(4)} | 🛡️ $${parseFloat(t.sl || 0).toFixed(4)}\n`;
             msg += `   💰 PnL: *${pnlStr}* (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%) | ${t.leverage || '?'}x\n\n`;
         });
 
-        const total = wins + losses + breakEvens;
-        const winRate = total > 0 ? ((wins / total) * 100).toFixed(1) : '0.0';
+        const total      = wins + losses + breakEvens;
+        const winRate    = total > 0 ? ((wins / total) * 100).toFixed(1) : '0.0';
         const profitFactor = losses > 0 ? (wins * 3 / (losses * 2)).toFixed(2) : '∞';
 
         msg += `━━━━━━━━━━━━━━━━━━━━━━\n`;
         msg += `🏆 *Win Rate: ${winRate}%* (${wins}W / ${losses}L / ${breakEvens}BE)\n`;
         msg += `📊 Profit Factor: ${profitFactor}\n`;
         msg += `💰 *Total PnL: ${totalPnL >= 0 ? '+' : ''}$${totalPnL.toFixed(2)}*\n`;
-        if (biggestWin) msg += `🥇 Best: +$${biggestWin.pnl.toFixed(2)} (${biggestWin.coin})\n`;
+        if (biggestWin)  msg += `🥇 Best: +$${biggestWin.pnl.toFixed(2)} (${biggestWin.coin})\n`;
         if (biggestLoss) msg += `💀 Worst: $${biggestLoss.pnl.toFixed(2)} (${biggestLoss.coin})\n`;
         msg += `\n💡 *.ph 20* — last 20 trades`;
 
@@ -548,16 +709,14 @@ cmd({
         let closedCount = 0;
         for (const trade of openTrades) {
             try {
-                // Get live price for final P&L
                 const livePrice = await getLivePrice(trade.coin).catch(() => null);
                 let paperProfit = 0;
-                if (livePrice && trade.quantity) {
+                if (livePrice && trade.quantity && trade.status === 'active') {
                     const diff = trade.direction === 'LONG'
                         ? livePrice - trade.entry
                         : trade.entry - livePrice;
                     paperProfit = diff * trade.quantity;
                 }
-                // Force-close without updating balance (balance getting reset anyway)
                 await db.Trade.findByIdAndUpdate(trade._id, {
                     status: 'closed',
                     result: 'MANUAL_RESET',
@@ -567,7 +726,7 @@ cmd({
             } catch(e) { /* skip */ }
         }
 
-        // ✅ Reset paper account — balance, start balance, stats, win/loss counters
+        // Reset paper account — balance, start balance, stats, win/loss counters
         await db.setPaperCapital(m.sender, resetAmount);
 
         // Also update margin if amount provided
