@@ -312,6 +312,8 @@ ${dangerWarning}
 ⚖️ *RRR:*      ${data.rrr} ${rrrCheck.pass ? '✅' : '⚠️'}
 📋 *Order:*    ${aData.orderSuggestion.type} — ${aData.orderSuggestion.reason}
 🔔 ${aData.confirmation.status}${zoneWarn}
+${aData.weeklyTgts ? `🗓️ *Extended TP:* ${aData.weeklyTgts.display}` : ''}
+${aData.cmeGap && aData.cmeGap.hasGap ? aData.cmeGap.display : ''}
 
 ━━━━━━━━━━━━━━━━━━
 *💼 POSITION SIZE*
@@ -350,6 +352,17 @@ ${aData.heikinAshi.display}
 🅡 ${aData.williamsR.display}
 ${aData.pivotSignal.display}
 ${aData.fibConf.display}
+
+━━━━━━━━━━━━━━━━━━
+*⚡ v6 BIG PROFIT SIGNALS*
+━━━━━━━━━━━━━━━━━━
+${aData.bbSqueeze.display}
+${aData.volExpansion.display || '📊 ADX Stable'}
+${aData.mmTrap.display !== 'None' ? '🪤 *MM Trap:* ' + aData.mmTrap.display : '🪤 MM Trap: None'}
+${aData.tf3Align.display}
+📅 *Daily Trend:* ${aData.dailyTrend} ${aData.dailyAligned ? '✅ Aligned' : '⚠️ Against daily'}
+${aData.weeklyTgts ? aData.weeklyTgts.display : '🗓️ Weekly targets: N/A'}
+${aData.cmeGap.display}
 
 *🔬 5m MTF:*
 ${aData.mtf5m.status}

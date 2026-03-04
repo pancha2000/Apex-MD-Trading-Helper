@@ -203,6 +203,27 @@ function startTradeManager(conn) {
                         continue;
                     }
 
+                    // ── STALE TRADE WARNING (48h without TP1) ───────────────
+                    // Trades open for 48h+ without TP1 hit = capital locked, opportunity cost
+                    if (!trade.tp1Hit && trade.status === 'active') {
+                        const hoursOpen = (Date.now() - new Date(trade.openTime)) / 3600000;
+                        if (hoursOpen >= 48 && !trade._staleWarned) {
+                            trade._staleWarned = true; // in-memory flag (not persisted)
+                            await conn.sendMessage(trade.userJid, { text:
+                                `⏰ *STALE TRADE WARNING!*\n━━━━━━━━━━━━━━━━\n` +
+                                `🪙 *${cb}/USDT* ${de} *${dir}*\n\n` +
+                                `⏱️ *${hoursOpen.toFixed(0)} hours open* — TP1 not hit yet.\n\n` +
+                                `📍 Entry: $${parseFloat(trade.entry).toFixed(4)}\n` +
+                                `💹 Current: $${currentPrice.toFixed(4)}\n` +
+                                `🎯 TP1: $${parseFloat(trade.tp1||trade.tp).toFixed(4)}\n\n` +
+                                `*Options:*\n` +
+                                `• Wait — setup still valid\n` +
+                                `• *.${isPaper ? 'closepaper' : 'closetrade'} ${cb}* — exit manually\n` +
+                                `⚠️ _Capital tied up for 2+ days without progress_`,
+                            });
+                        }
+                    }
+
                     // ── TP1 HIT ─────────────────────────────────────────
                     if (trade.tp1 && !trade.tp1Hit) {
                         const tp1v   = parseFloat(trade.tp1);
@@ -453,6 +474,72 @@ function stopSignalScanner() {
     _scannerActive = false;
     console.log('[Scanner] 🔴 Signal scanner stopped.');
 }
+
+// ─── Funding Rate Extreme Alert (.fundingalert) ───────────────
+/**
+ * Checks funding rates for top 15 coins.
+ * Extreme positive rate (>0.1%) = longs overloaded → SHORT squeeze risk.
+ * Extreme negative rate (<-0.1%) = shorts overloaded → LONG squeeze risk.
+ * These contrarian setups have the highest reward potential.
+ */
+cmd({
+    pattern: 'fundingalert', alias: ['funding', 'squeeze', 'fundrates'],
+    desc: 'Extreme funding rate scanner — find squeeze setups',
+    category: 'crypto', react: '💸', filename: __filename,
+},
+async (conn, mek, m, { reply }) => {
+    try {
+        await m.react('⏳');
+        const axios = require('axios');
+        const res = await axios.get('https://fapi.binance.com/fapi/v1/premiumIndex', { timeout: 8000 });
+        const data = res.data;
+        if (!data || !data.length) return await reply('❌ Funding data ලබාගැනීමට නොහැකිය.');
+
+        const coins = ['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT','ADAUSDT','AVAXUSDT',
+                       'DOTUSDT','LINKUSDT','MATICUSDT','ATOMUSDT','NEARUSDT','LTCUSDT','DOGEUSDT','UNIUSDT'];
+
+        const extremes = [], mildLong = [], mildShort = [];
+        coins.forEach(coin => {
+            const d = data.find(x => x.symbol === coin);
+            if (!d) return;
+            const rate = parseFloat(d.lastFundingRate) * 100;
+            const name = coin.replace('USDT','');
+            if (rate > 0.1)       extremes.push({ name, rate, dir: 'SHORT', label: `🔴 Longs overloaded → SHORT squeeze!` });
+            else if (rate < -0.1) extremes.push({ name, rate, dir: 'LONG',  label: `🟢 Shorts overloaded → LONG squeeze!` });
+            else if (rate > 0.05) mildLong.push({ name, rate });
+            else if (rate < -0.05) mildShort.push({ name, rate });
+        });
+
+        extremes.sort((a,b) => Math.abs(b.rate) - Math.abs(a.rate));
+
+        let msg = `💸 *FUNDING RATE EXTREME SCANNER*\n━━━━━━━━━━━━━━━━━━\n\n`;
+        if (extremes.length === 0) {
+            msg += `⚪ *No extreme funding rates right now.*\nAll rates within normal range (-0.1% ~ +0.1%).\n\n`;
+        } else {
+            msg += `🚨 *EXTREME RATES (>0.1%) — Squeeze Risk!*\n`;
+            extremes.forEach(e => {
+                const sign = e.rate > 0 ? '+' : '';
+                msg += `\n💀 *#${e.name}* — ${sign}${e.rate.toFixed(4)}%\n`;
+                msg += `   ${e.label}\n`;
+                msg += `   🤖 *.future ${e.name}* (look for ${e.dir} setup)\n`;
+            });
+            msg += '\n';
+        }
+        if (mildLong.length || mildShort.length) {
+            msg += `━━━━━━━━━━━━━━━━━━\n⚠️ *Elevated Rates (Watch)*\n`;
+            mildLong.forEach(e  => msg += `🔴 #${e.name}: +${e.rate.toFixed(4)}% (Longs paying)\n`);
+            mildShort.forEach(e => msg += `🟢 #${e.name}: ${e.rate.toFixed(4)}% (Shorts paying)\n`);
+        }
+        msg += `\n━━━━━━━━━━━━━━━━━━\n💡 *Funding Rate Guide:*\n`;
+        msg += `> +0.1%+ = Longs crowded → Short squeeze imminent\n`;
+        msg += `< -0.1% = Shorts crowded → Long squeeze imminent\n`;
+        msg += `0.01% neutral zone = balanced market\n\n`;
+        msg += `_ℹ️ Every 8h funds transfer. Next: check .news for sentiment_`;
+
+        await reply(msg.trim());
+        await m.react('✅');
+    } catch(e) { await reply('❌ Error: ' + e.message); }
+});
 
 // ─── Manual Scan Command (.scan) ──────────────────────────────
 cmd({
