@@ -311,8 +311,9 @@ cmd({
         await db.saveTrade({
             userJid: m.sender,
             coin, type: 'future', direction,
-            entry, tp, tp1: tp1 || tp, tp2: tp, sl,
-            rrr: `1:${(Math.abs(tp - entry) / Math.abs(entry - sl)).toFixed(2)}`,
+            // ✅ FIX: tp = final target (TP3), tp2 = second target. Before fix both were TP2.
+            entry, tp: tp3 || tp, tp1: tp1 || tp, tp2: tp, sl,
+            rrr: `1:${(Math.abs((tp3 || tp) - entry) / Math.abs(entry - sl)).toFixed(2)}`,
             status:    tradeStatus,   // ← 'active' or 'pending' (fixed)
             orderType: orderType,     // ← 'MARKET' or 'LIMIT' (fixed)
             fillPrice: fillPrice,
@@ -363,13 +364,13 @@ cmd({
 ━━━━━━━━━━━━━━━━━━━━━━
 
 🪙 *${coinBase}/USDT* ${dirEmoji} *${direction}*
-📊 Score: ${score}${aData ? `/${aData.maxScore}` : ''} | ⏱️ ${timeframe}${categoryNote}
+📊 Score: ${score}/50 | ⏱️ ${timeframe}${categoryNote}
 
 *Position Details:*
 📍 Entry:     $${entry}${livePriceNote}
 🎯 TP1:       $${tp1 ? tp1.toFixed(4) : 'N/A'} (+${tp1Pct}%)
 🎯 TP2:       $${tp.toFixed(4)} (+${tpPct}%)
-${tp3 ? `🎯 TP3:       $${tp3.toFixed(4)}\n` : ''}🛡️ SL:        $${sl} (-${slPct}%)
+${tp3 ? `🎯 TP3:       $${tp3.toFixed(4)} (+${(Math.abs(tp3 - entry) / entry * 100).toFixed(2)}%)\n` : ''}🛡️ SL:        $${sl} (-${slPct}%)
 ⚖️ RRR:       1:${rrr}
 
 *Virtual Position:*
@@ -454,7 +455,6 @@ cmd({
 
             // Distance to TP/SL
             const distToSL = livePrice ? (Math.abs(livePrice - t.sl) / livePrice * 100).toFixed(1) : '?';
-            const distToTP = livePrice ? (Math.abs(livePrice - t.tp) / livePrice * 100).toFixed(1) : '?';
             const openTime  = new Date(t.openTime);
             const hoursOpen = ((Date.now() - openTime) / 3600000).toFixed(1);
 
@@ -485,8 +485,16 @@ cmd({
             }
 
             msg += `${pnlEmoji} *PnL: ${t.status === 'pending' ? '⏳ Pending fill...' : pnlStr}*\n`;
-            msg += `🎯 TP1 ${tp1Status} $${parseFloat(t.tp1||t.tp).toFixed(4)} | TP2 ${tp2Status} $${parseFloat(t.tp2||t.tp).toFixed(4)}\n`;
-            msg += `🎯 TP3: $${parseFloat(t.tp).toFixed(4)} (${distToTP}% away) | 🛡️ SL: $${parseFloat(t.sl).toFixed(4)} (${distToSL}% away)\n`;
+            // ✅ FIX: t.tp = TP3 (final target), t.tp2 = TP2 (intermediate target)
+            // Show TP2 and TP3 separately — they should be different values now.
+            const tp2Display = t.tp2 && parseFloat(t.tp2) !== parseFloat(t.tp)
+                ? parseFloat(t.tp2).toFixed(4)
+                : null;
+            const tp3Display = parseFloat(t.tp).toFixed(4);
+            const distToTP3 = livePrice ? (Math.abs(livePrice - parseFloat(t.tp)) / livePrice * 100).toFixed(1) : '?';
+
+            msg += `🎯 TP1 ${tp1Status} $${parseFloat(t.tp1||t.tp).toFixed(4)} | TP2 ${tp2Status} $${tp2Display || parseFloat(t.tp2||t.tp).toFixed(4)}\n`;
+            msg += `🎯 TP3: $${tp3Display} (${distToTP3}% away) | 🛡️ SL: $${parseFloat(t.sl).toFixed(4)} (${distToSL}% away)\n`;
             msg += `💰 Margin: $${(t.marginUsed||0).toFixed(2)} | 📦 Qty: ${(t.quantity||0).toFixed(4)} ${coinBase}\n`;
             msg += `⏱️ Open ${hoursOpen}h | 🆔 ${t._id.toString().slice(-6)}\n\n`;
         });

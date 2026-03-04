@@ -81,11 +81,20 @@ async (conn, mek, m, { reply }) => {
             tp2 = tp2Match ? parseFloat(tp2Match[1].replace(/,/g, '')) : null;
         }
 
-        // ✅ FIX: Bulletproof Direction Detection 
-        // (SHORT අකුර හෝ 🔴 ලකුණ තිබුණොත් අනිවාර්යයෙන්ම SHORT, නැත්නම් LONG)
+        // ✅ FIX: Direction detection — must match explicit header line only.
+        // Old code checked quotedText.includes('Bearish') which falsely matched
+        // reason strings like "MACD Bear", "Bearish OB" even in LONG signals.
+        // Now we extract from the explicit direction header line only.
         let direction = 'LONG';
-        if (quotedText.includes('SHORT') || quotedText.includes('🔴 SHORT') || quotedText.includes('Bearish')) {
-            direction = 'SHORT';
+        const dirLineMatch = quotedText.match(/\*?(LONG|SHORT)\*?\s*(?:🟢|🔴)|\b(LONG|SHORT)\b.*?(?:📊|Signal|Direction)/i)
+            || quotedText.match(/Smart Entry[^\n]*(LONG|SHORT)/i)
+            || quotedText.match(/🔴\s*\*?SHORT\*?|🟢\s*\*?LONG\*?/);
+        if (dirLineMatch) {
+            const matched = (dirLineMatch[1] || dirLineMatch[2] || dirLineMatch[0] || '').toUpperCase();
+            direction = matched.includes('SHORT') ? 'SHORT' : 'LONG';
+        } else if (/\[TARGETS\|.*?\]/.test(quotedText)) {
+            // For tagged messages, check explicit SHORT tag
+            direction = quotedText.includes('SHORT') && !quotedText.match(/Bear(?:ish)?\s+OB|MTF\s+Bear|MACD\s+Bear/) ? 'SHORT' : 'LONG';
         }
 
         const rrrMatch = quotedText.match(/RRR.*?(1:[\d.]+)/);

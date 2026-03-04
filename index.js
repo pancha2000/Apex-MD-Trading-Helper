@@ -100,6 +100,15 @@ async function startBot() {
         } else if (connection === 'open') {
             console.log('✅ Bot Connected to WhatsApp Successfully!');
             console.log('💡 Type .scanstart in your WhatsApp to activate the Auto-Scanner!');
+            // ✅ FIX: Auto-start trade manager on every connect/reconnect
+            // This ensures TP/SL monitoring works even if .set 1 on was never called.
+            try {
+                const scanner = require('./plugins/scanner');
+                scanner.autoStartTradeManager(conn);
+                console.log('✅ Trade Manager auto-started (TP/SL monitoring active)');
+            } catch(e) {
+                console.log('⚠️ Trade Manager auto-start skipped:', e.message);
+            }
         }
     });
 

@@ -212,7 +212,7 @@ function startTradeManager(conn) {
                             if (isPaper) {
                                 const pQty = (trade.quantity || 0) * 0.33;
                                 const pPnl = Math.abs(tp1v - trade.entry) * pQty;
-                                await db.updatePaperBalance(trade.userJid, pPnl, false, false);
+                                await db.updatePaperBalance(trade.userJid, pPnl, pPnl > 0, false); // ✅ FIX: partial TP1
                                 trade.sl = trade.entry;   // move SL to break-even
                                 await trade.save();
                                 await conn.sendMessage(trade.userJid, { text:
@@ -539,4 +539,14 @@ function stopScannerFromSettings() {
     return true;
 }
 
-module.exports = { getScannerStatus, startScannerFromSettings, stopScannerFromSettings };
+/**
+ * ✅ FIX: Auto-start just the trade manager on every bot connect.
+ * Called from index.js after 'connection.open' fires so TP/SL monitoring
+ * works immediately without needing the user to run .set 1 on.
+ * Safe to call multiple times — startTradeManager() is idempotent.
+ */
+function autoStartTradeManager(conn) {
+    startTradeManager(conn);
+}
+
+module.exports = { getScannerStatus, startScannerFromSettings, stopScannerFromSettings, autoStartTradeManager };
