@@ -61,7 +61,7 @@ async function getTopDownSetups() {
         try {
             const aData = await analyzer.run14FactorAnalysis(coin, '15m');
 
-            if (aData.score >= 9) {
+            if (aData.score >= 12) {   // ✅ Raised from 9→12 for v6 (max 70). Higher = better quality
                 const sent     = await getSentimentCached();
                 const sentBias = parseFloat(sent.totalBias) || 0;
                 const sentBonus =
@@ -72,6 +72,31 @@ async function getTopDownSetups() {
 
                 const adjustedScore = aData.score + sentBonus;
 
+                // ── ENHANCED CONFIRMATION GATE ────────────────────────────
+                // Uses the new confScore from analyzer (0-13 confirmations).
+                // A signal with score 12 but 0 confirmations = noise.
+                // A signal with score 12 and 3+ confirmations = real setup.
+                const confScore = aData.confScore || 0;
+                const confGate  = aData.confGate || false;
+
+                // Legacy 4-factor core check (backward compat)
+                const coreConf = [
+                    aData.choch && aData.choch.includes(aData.direction === 'LONG' ? 'Bullish' : 'Bearish'),
+                    aData.liquiditySweep && aData.liquiditySweep.includes(aData.direction === 'LONG' ? 'Bullish' : 'Bearish'),
+                    aData.choch5m && aData.choch5m.includes(aData.direction === 'LONG' ? 'Bullish' : 'Bearish'),
+                    aData.sweep5m && aData.sweep5m.includes(aData.direction === 'LONG' ? 'Bullish' : 'Bearish'),
+                ].filter(Boolean).length;
+
+                // ── QUALITY GATE: require score + confirmations ───────────
+                // High score (≥18): accept with 1+ confirmation
+                // Normal score (12-17): require 2+ confirmations
+                // Both gates: confGate (2+ broad) OR coreConf (2+ SMC)
+                const qualityPass =
+                    adjustedScore >= 18 ? (confScore >= 1 || coreConf >= 1) :
+                    adjustedScore >= 12 ? (confGate || coreConf >= 2) : false;
+
+                if (!qualityPass) continue;
+
                 foundSetups.push({
                     coin:           coin.replace('USDT', ''),
                     type:           aData.direction === 'LONG' ? 'LONG 🟢' : 'SHORT 🔴',
@@ -79,16 +104,28 @@ async function getTopDownSetups() {
                     score:          `${adjustedScore}/${aData.maxScore}`,
                     price:          aData.priceStr,
                     tp1:            aData.tp1,
+                    tp2:            aData.tp2,
+                    tp3:            aData.tp3,
                     tp:             aData.tp2,
                     sl:             aData.sl,
                     adx:            aData.adxData.value,
                     reasons:        aData.reasons,
                     liquiditySweep: aData.liquiditySweep || 'None',
                     choch:          aData.choch || 'None',
+                    choch5m:        aData.choch5m || 'None',
+                    sweep5m:        aData.sweep5m || 'None',
                     sentEmoji:      sentBonus > 0 ? '📰✅' : sentBonus < 0 ? '📰⚠️' : '',
-                    // MTF trade category (from Sniper edition)
                     tradeCategory:  aData.tradeCategory ? aData.tradeCategory.label : null,
                     orderType:      aData.orderSuggestion ? aData.orderSuggestion.type : null,
+                    dailyTrend:     aData.dailyTrend || '',
+                    dailyAligned:   aData.dailyAligned,
+                    bbSqueeze:      aData.bbSqueeze,
+                    volExpansion:   aData.volExpansion,
+                    mmTrap:         aData.mmTrap,
+                    tf3Align:       aData.tf3Align,
+                    coreConf,
+                    confScore:      confScore,   // ✅ NEW: full confirmation count
+                    confGate:       confGate,    // ✅ NEW: passed quality gate
                 });
             }
         } catch (_e) { /* skip failed coin */ }
@@ -428,9 +465,12 @@ async function runSignalScan() {
             const orderTag = s.orderType
                 ? (s.orderType.includes('LIMIT') ? ' ⏳ LIMIT' : ' ⚡ MARKET')
                 : '';
+            const dayTag   = s.dailyTrend ? ` | Daily: ${s.dailyTrend} ${s.dailyAligned ? '✅' : '⚠️'}` : '';
+            const trapTag  = s.mmTrap && (s.mmTrap.bullTrap || s.mmTrap.bearTrap) ? ` 🪤` : '';
+            const sqzTag   = s.bbSqueeze && s.bbSqueeze.exploding ? ` 💥` : '';
             msg +=
-                `*${i + 1}. #${s.coin}* - ${s.type} (Score: ${s.score} ⭐) ${s.sentEmoji || ''}${orderTag}${catTag}\n` +
-                `   📍 $${s.price} | ADX: ${s.adx}\n` +
+                `*${i + 1}. #${s.coin}* - ${s.type} (Score: ${s.score} ⭐) ${s.sentEmoji || ''}${orderTag}${trapTag}${sqzTag}${catTag}\n` +
+                `   📍 $${s.price} | ADX: ${s.adx}${dayTag}\n` +
                 `   ✔️ ${s.reasons}\n` +
                 `   🤖 .future ${s.coin} 15m\n\n`;
         });
@@ -572,7 +612,7 @@ async (conn, mek, m, { reply }) => {
         if (setups.length === 0) {
             return await reply(
                 `╔═══════════════════════════╗\n║  🔍 *MANUAL SCAN RESULTS*  ║\n╚═══════════════════════════╝\n\n` +
-                `Score 9/${55} ට වඩා ලබාගත් Setups දැනට නොමැත. ⚪\n\nකිසිවේලාවකට පසු නැවත .scan ගසන්න.\n\n${scanStatus}`
+                `Score 12/70 ට වඩා ලබාගත් Setups දැනට නොමැත. ⚪\n\nකිසිවේලාවකට පසු නැවත .scan ගසන්න.\n\n${scanStatus}`
             );
         }
 
@@ -582,17 +622,29 @@ async (conn, mek, m, { reply }) => {
         outMsg += `${sent.fngEmoji} F&G: ${sent.fngValue} | ₿ BTC.D: ${sent.btcDominance}% | 📰 ${sent.newsSentimentScore > 0 ? '+' : ''}${sent.newsSentimentScore}\n\n`;
 
         setups.forEach((s, i) => {
-            const mSweep   = s.liquiditySweep !== 'None' ? `\n   💧 ${s.liquiditySweep}` : '';
-            const mChoch   = s.choch !== 'None'          ? `\n   🔄 ${s.choch}` : '';
-            const catLine  = s.tradeCategory             ? `\n   📅 ${s.tradeCategory}` : '';
-            const orderTag = s.orderType
+            const mSweep    = s.liquiditySweep !== 'None'  ? `\n   💧 ${s.liquiditySweep}` : '';
+            const mChoch    = s.choch !== 'None'           ? `\n   🔄 ${s.choch}` : '';
+            const mChoch5m  = s.choch5m && s.choch5m !== 'None' ? `\n   ⚡ 5m: ${s.choch5m}` : '';
+            const catLine   = s.tradeCategory              ? `\n   📅 ${s.tradeCategory}` : '';
+            const orderTag  = s.orderType
                 ? (s.orderType.includes('LIMIT') ? '\n   📋 ⏳ LIMIT ORDER' : '\n   📋 ⚡ MARKET ORDER')
                 : '';
+            const dayTag    = s.dailyTrend ? `\n   📅 Daily: ${s.dailyTrend} ${s.dailyAligned ? '✅' : '⚠️'}` : '';
+            const trapTag   = s.mmTrap && (s.mmTrap.bullTrap || s.mmTrap.bearTrap)
+                ? `\n   🪤 ${s.mmTrap.display}` : '';
+            const sqzTag    = s.bbSqueeze && (s.bbSqueeze.exploding || s.bbSqueeze.isSqueezing)
+                ? `\n   ${s.bbSqueeze.exploding ? '💥' : '⚡'} ${s.bbSqueeze.display}` : '';
+            const tfTag     = s.tf3Align && s.tf3Align.aligned
+                ? `\n   ✅ ${s.tf3Align.display}` : '';
+            const confTag   = `\n   🔒 Confirmations: ${s.confScore || s.coreConf}/${s.confScore ? '13' : '4'} ${s.confGate ? '✅' : ''}`;
+            const wyckTag   = s.reasons && s.reasons.includes('Wyckoff') ? `\n   🌊 ${s.reasons.split(',').find(r=>r.includes('Wyckoff'))?.trim()}` : '';
+            const ichiTag   = s.reasons && s.reasons.includes('Ichimoku') ? `\n   ☁️ ${s.reasons.split(',').find(r=>r.includes('Ichimoku'))?.trim()}` : '';
             outMsg +=
                 `*${i + 1}. #${s.coin}* - ${s.type} (Score: ${s.score} ⭐) ${s.sentEmoji || ''}\n` +
-                `   📍 Price: $${s.price}\n   🔥 ADX: ${s.adx}\n` +
-                `   ✔️ Reasons: ${s.reasons}${mSweep}${mChoch}${catLine}${orderTag}\n` +
-                `   🤖 AI Check: ${config.PREFIX}future ${s.coin} 15m\n\n`;
+                `   📍 Price: $${s.price} | 🔥 ADX: ${s.adx}\n` +
+                `   🎯 TP1: $${s.tp1} | TP2: $${s.tp2} | SL: $${s.sl}\n` +
+                `   ✔️ ${s.reasons}${mSweep}${mChoch}${mChoch5m}${dayTag}${trapTag}${sqzTag}${tfTag}${wyckTag}${ichiTag}${catLine}${orderTag}${confTag}\n` +
+                `   🤖 *.future ${s.coin} 15m*\n\n`;
         });
         outMsg += `${wsStatus}\n${scanStatus}`;
 
