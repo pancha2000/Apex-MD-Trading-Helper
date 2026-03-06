@@ -1,21 +1,21 @@
 /**
  * ═══════════════════════════════════════════════════════════════
- *  APEX-MD  ·  scanner.js  ·  Event-Driven WebSocket Edition
+ *  APEX-MD  ·  scanner.js  ·  Institutional-Grade Adaptive Edition
  *  ─────────────────────────────────────────────────────────────
- *  • NO setInterval for signal scanning — 100% event-driven
- *  • Listens to binance.wsEvents '15m_candle_close' events
- *  • 15-second debounce batches multiple simultaneous closes
- *    into a single scan pass (all 30 coins close at the same time)
- *  • Trade Manager keeps its 60-second price-poll (one REST call
- *    per active trade per minute — minimal overhead)
- *  • WebSocket init called automatically when scanner starts
+ *  v7 UPGRADES:
+ *  1. 📅 DAILY BIAS MASTER FILTER (Top-Down Analysis)
+ *     • If Daily Bias = BULLISH  → All SHORT signals IGNORED
+ *       Exception: ⚡ HIGH-PROB SCALP with score ≥ 45 bypasses filter
+ *     • If Daily Bias = BEARISH  → All LONG signals IGNORED
+ *       Exception: same high-score scalp exception
+ *     • If Daily Bias = RANGING  → No filter applied (both directions ok)
  *
- *  ✅ TRADE MANAGER FIX: Pending → Active fill logic now uses a
- *     0.25% tolerance buffer so LIMIT orders fill when price
- *     enters the entry *zone*, not only at an exact tick match.
- *     Correct directional logic:
- *       LONG pending  → fills when currentPrice ≤ entry × 1.0025
- *       SHORT pending → fills when currentPrice ≥ entry × 0.9975
+ *  2. Daily Bias shown in all scan output messages
+ *  3. Golden Confluence tag shown in setup display
+ *  4. Trade manager: saves closeMetadata on auto-close for backtesting
+ *
+ *  All prior event-driven WebSocket logic, trade manager, and
+ *  funding alert command preserved exactly.
  * ═══════════════════════════════════════════════════════════════
  */
 
@@ -31,7 +31,7 @@ const analyzer = require('../lib/analyzer');
 // ─── Sentiment Cache ───────────────────────────────────────────
 let cachedSentiment    = null;
 let sentimentCacheTime = 0;
-const SENTIMENT_CACHE_MS = 5 * 60 * 1000;   // refresh every 5 min
+const SENTIMENT_CACHE_MS = 5 * 60 * 1000;
 
 async function getSentimentCached() {
     if (!cachedSentiment || Date.now() - sentimentCacheTime > SENTIMENT_CACHE_MS) {
@@ -44,12 +44,22 @@ async function getSentimentCached() {
     return cachedSentiment;
 }
 
-// ─── Top 5 Setups Scanner ─────────────────────────────────────
+// ══════════════════════════════════════════════════════════════
+//  TOP-DOWN SETUP SCANNER
+//  v7: Daily Bias Master Filter applied before quality gate.
+//  A signal that contradicts the daily bias is not a setup —
+//  it's a noise trade with institutional headwind against it.
+// ══════════════════════════════════════════════════════════════
+
 /**
- * Scans all watched coins (already in WS cache) for high-probability
- * setups using the 14-Factor analyzer.
- * No REST calls are made here — everything reads from the in-memory cache.
+ * Score threshold for a HIGH-PROB SCALP to bypass the Daily Bias filter.
+ * Rationale: A massive-score scalp (strong institutional 15m OB + 5m confirmation)
+ * can occasionally be taken against the daily bias, but ONLY if every other
+ * factor aligns and the score far exceeds the normal entry threshold.
  */
+const BIAS_EXCEPTION_SCORE = 45;   // Only scalps scoring 45+/90 can bypass daily bias filter
+const MIN_SCAN_SCORE       = 12;   // Minimum score to even consider a setup
+
 async function getTopDownSetups() {
     const foundSetups = [];
 
@@ -61,73 +71,101 @@ async function getTopDownSetups() {
         try {
             const aData = await analyzer.run14FactorAnalysis(coin, '15m');
 
-            if (aData.score >= 12) {   // ✅ Raised from 9→12 for v6 (max 70). Higher = better quality
-                const sent     = await getSentimentCached();
-                const sentBias = parseFloat(sent.totalBias) || 0;
-                const sentBonus =
-                    (aData.direction === 'LONG'  && sentBias >= 1)  ?  1 :
-                    (aData.direction === 'SHORT' && sentBias <= -1) ?  1 :
-                    (aData.direction === 'LONG'  && sentBias <= -1) ? -1 :
-                    (aData.direction === 'SHORT' && sentBias >= 1)  ? -1 : 0;
+            if (aData.score < MIN_SCAN_SCORE) continue;
 
-                const adjustedScore = aData.score + sentBonus;
+            const sent      = await getSentimentCached();
+            const sentBias  = parseFloat(sent.totalBias) || 0;
+            const sentBonus =
+                (aData.direction === 'LONG'  && sentBias >= 1)  ?  1 :
+                (aData.direction === 'SHORT' && sentBias <= -1) ?  1 :
+                (aData.direction === 'LONG'  && sentBias <= -1) ? -1 :
+                (aData.direction === 'SHORT' && sentBias >= 1)  ? -1 : 0;
 
-                // ── ENHANCED CONFIRMATION GATE ────────────────────────────
-                // Uses the new confScore from analyzer (0-13 confirmations).
-                // A signal with score 12 but 0 confirmations = noise.
-                // A signal with score 12 and 3+ confirmations = real setup.
-                const confScore = aData.confScore || 0;
-                const confGate  = aData.confGate || false;
+            const adjustedScore = aData.score + sentBonus;
 
-                // Legacy 4-factor core check (backward compat)
-                const coreConf = [
-                    aData.choch && aData.choch.includes(aData.direction === 'LONG' ? 'Bullish' : 'Bearish'),
-                    aData.liquiditySweep && aData.liquiditySweep.includes(aData.direction === 'LONG' ? 'Bullish' : 'Bearish'),
-                    aData.choch5m && aData.choch5m.includes(aData.direction === 'LONG' ? 'Bullish' : 'Bearish'),
-                    aData.sweep5m && aData.sweep5m.includes(aData.direction === 'LONG' ? 'Bullish' : 'Bearish'),
-                ].filter(Boolean).length;
+            // ════════════════════════════════════════════════════════
+            //  v7: DAILY BIAS MASTER FILTER (Top-Down Analysis)
+            //  ─────────────────────────────────────────────────────
+            //  This is the most important filter in institutional trading.
+            //  Trading WITH the daily bias = trading with institutional flow.
+            //  Trading AGAINST it = fighting the dominant market participants.
+            //
+            //  Rules:
+            //   • BULLISH daily → Only LONG setups pass (no counter-trend shorts)
+            //   • BEARISH daily → Only SHORT setups pass (no counter-trend longs)
+            //   • RANGING daily → Both directions allowed (no filter)
+            //
+            //  Exception: A HIGH-PROB SCALP (⚡) with score ≥ 45 can bypass.
+            //  This allows rare, ultra-high-confidence scalps against the bias
+            //  when the 4H + 1H + 15m + 5m OB structure is overwhelmingly clear.
+            // ════════════════════════════════════════════════════════
+            const dailyBias       = aData.dailyBias;
+            const isHighProbScalp = aData.tradeCategory && aData.tradeCategory.label.includes('HIGH-PROB SCALP');
+            const isExceptionCase = isHighProbScalp && adjustedScore >= BIAS_EXCEPTION_SCORE;
 
-                // ── QUALITY GATE: require score + confirmations ───────────
-                // High score (≥18): accept with 1+ confirmation
-                // Normal score (12-17): require 2+ confirmations
-                // Both gates: confGate (2+ broad) OR coreConf (2+ SMC)
-                const qualityPass =
-                    adjustedScore >= 18 ? (confScore >= 1 || coreConf >= 1) :
-                    adjustedScore >= 12 ? (confGate || coreConf >= 2) : false;
-
-                if (!qualityPass) continue;
-
-                foundSetups.push({
-                    coin:           coin.replace('USDT', ''),
-                    type:           aData.direction === 'LONG' ? 'LONG 🟢' : 'SHORT 🔴',
-                    rawScore:       adjustedScore,
-                    score:          `${adjustedScore}/${aData.maxScore}`,
-                    price:          aData.priceStr,
-                    tp1:            aData.tp1,
-                    tp2:            aData.tp2,
-                    tp3:            aData.tp3,
-                    tp:             aData.tp2,
-                    sl:             aData.sl,
-                    adx:            aData.adxData.value,
-                    reasons:        aData.reasons,
-                    liquiditySweep: aData.liquiditySweep || 'None',
-                    choch:          aData.choch || 'None',
-                    choch5m:        aData.choch5m || 'None',
-                    sweep5m:        aData.sweep5m || 'None',
-                    sentEmoji:      sentBonus > 0 ? '📰✅' : sentBonus < 0 ? '📰⚠️' : '',
-                    tradeCategory:  aData.tradeCategory ? aData.tradeCategory.label : null,
-                    orderType:      aData.orderSuggestion ? aData.orderSuggestion.type : null,
-                    dailyTrend:     aData.dailyTrend || '',
-                    dailyAligned:   aData.dailyAligned,
-                    bbSqueeze:      aData.bbSqueeze,
-                    volExpansion:   aData.volExpansion,
-                    mmTrap:         aData.mmTrap,
-                    tf3Align:       aData.tf3Align,
-                    coreConf,
-                    confScore:      confScore,   // ✅ NEW: full confirmation count
-                    confGate:       confGate,    // ✅ NEW: passed quality gate
-                });
+            if (dailyBias && dailyBias.bias !== 'RANGING') {
+                if (dailyBias.bias === 'BULLISH' && aData.direction === 'SHORT') {
+                    if (!isExceptionCase) continue;   // blocked — trading against daily bull
+                }
+                if (dailyBias.bias === 'BEARISH' && aData.direction === 'LONG') {
+                    if (!isExceptionCase) continue;   // blocked — trading against daily bear
+                }
             }
+
+            // ── Confirmation Gate ─────────────────────────────────
+            const confScore = aData.confScore || 0;
+            const confGate  = aData.confGate  || false;
+
+            const coreConf = [
+                aData.choch && aData.choch.includes(aData.direction === 'LONG' ? 'Bullish' : 'Bearish'),
+                aData.liquiditySweep && aData.liquiditySweep.includes(aData.direction === 'LONG' ? 'Bullish' : 'Bearish'),
+                aData.choch5m && aData.choch5m.includes(aData.direction === 'LONG' ? 'Bullish' : 'Bearish'),
+                aData.sweep5m && aData.sweep5m.includes(aData.direction === 'LONG' ? 'Bullish' : 'Bearish'),
+            ].filter(Boolean).length;
+
+            const qualityPass =
+                adjustedScore >= 18 ? (confScore >= 1 || coreConf >= 1) :
+                adjustedScore >= 12 ? (confGate || coreConf >= 2) : false;
+
+            if (!qualityPass) continue;
+
+            // ── Build Setup Object ────────────────────────────────
+            foundSetups.push({
+                coin:             coin.replace('USDT', ''),
+                type:             aData.direction === 'LONG' ? 'LONG 🟢' : 'SHORT 🔴',
+                rawScore:         adjustedScore,
+                score:            `${adjustedScore}/${aData.maxScore}`,
+                price:            aData.priceStr,
+                tp1:              aData.tp1,
+                tp2:              aData.tp2,
+                tp3:              aData.tp3,
+                tp:               aData.tp2,
+                sl:               aData.sl,
+                adx:              aData.adxData.value,
+                reasons:          aData.reasons,
+                liquiditySweep:   aData.liquiditySweep || 'None',
+                choch:            aData.choch || 'None',
+                choch5m:          aData.choch5m || 'None',
+                sweep5m:          aData.sweep5m || 'None',
+                sentEmoji:        sentBonus > 0 ? '📰✅' : sentBonus < 0 ? '📰⚠️' : '',
+                tradeCategory:    aData.tradeCategory ? aData.tradeCategory.label : null,
+                orderType:        aData.orderSuggestion ? aData.orderSuggestion.type : null,
+                dailyTrend:       aData.dailyTrend || '',
+                dailyAligned:     aData.dailyAligned,
+                // v7 NEW fields
+                dailyBias:        aData.dailyBias,       // full bias object
+                regimeLabel:      aData.regimeLabel,     // 'TRENDING (ADX 28)' etc.
+                goldenConfluence: aData.goldenConfluence, // true = ⭐ bonus active
+                isExceptionCase,                          // true = bypassed daily filter
+                bbSqueeze:        aData.bbSqueeze,
+                volExpansion:     aData.volExpansion,
+                mmTrap:           aData.mmTrap,
+                tf3Align:         aData.tf3Align,
+                coreConf,
+                confScore,
+                confGate,
+            });
+
         } catch (_e) { /* skip failed coin */ }
     }
 
@@ -143,26 +181,14 @@ let _debounceTimer   = null;
 let _connRef         = null;
 let _ownerJidRef     = null;
 
-// ─── Trade Manager (60-second price poll) ─────────────────────
-/**
- * Checks every 60 seconds:
- *   PENDING trades → activate when price enters the entry zone
- *   ACTIVE trades  → check TP1, TP2, TP3, SL, DCA, trailing SL
- *
- * ✅ FIX: Fill tolerance of 0.25% added to PENDING → ACTIVE transition.
- *    Real exchange limit orders fill inside a zone, not only at a single tick.
- *    Without tolerance, a LONG order at $100.00 would never fill if the lowest
- *    live price polled is $100.02 — now it fills at $100.25 or below.
- *
- *    LONG  pending fills: currentPrice ≤ entry × (1 + FILL_TOLERANCE)
- *    SHORT pending fills: currentPrice ≥ entry × (1 - FILL_TOLERANCE)
- */
+// ══════════════════════════════════════════════════════════════
+//  TRADE MANAGER (60-second price poll)
+//  v7: Auto-close events save closeMetadata to MongoDB for
+//  the upcoming AI Backtesting module.
+// ══════════════════════════════════════════════════════════════
 function startTradeManager(conn) {
     if (activeTradeManager) return;
 
-    // Fill zone tolerance: 0.25%
-    // Meaning: a LONG order at $100 will fill if price reaches $100.25 or lower.
-    // This mirrors how exchange limit orders fill inside a price band.
     const FILL_TOLERANCE = 0.0025;
 
     activeTradeManager = setInterval(async () => {
@@ -184,28 +210,13 @@ function startTradeManager(conn) {
                     const de      = isLong ? '🟢' : '🔴';
                     const dir     = trade.direction;
 
-                    // ═══════════════════════════════════════════════════════
-                    // PENDING → ACTIVE (LIMIT ORDER FILL)
-                    // ═══════════════════════════════════════════════════════
-                    //
-                    // Logic:
-                    //   LONG  limit: we placed a buy order BELOW current price.
-                    //                It fills when price DROPS to or below entry.
-                    //                Fill zone: currentPrice ≤ entry × (1 + FILL_TOLERANCE)
-                    //                (0.25% tolerance: fills if price is within 0.25% above entry)
-                    //
-                    //   SHORT limit: we placed a sell order ABOVE current price.
-                    //                It fills when price RISES to or above entry.
-                    //                Fill zone: currentPrice ≥ entry × (1 - FILL_TOLERANCE)
-                    //                (0.25% tolerance: fills if price is within 0.25% below entry)
-                    //
+                    // ── PENDING → ACTIVE ──────────────────────────────
                     if (trade.status === 'pending') {
                         const fillZoneHit = isLong
                             ? currentPrice <= trade.entry * (1 + FILL_TOLERANCE)
                             : currentPrice >= trade.entry * (1 - FILL_TOLERANCE);
 
                         if (fillZoneHit) {
-                            // Activate the trade — record actual fill price
                             trade.status    = 'active';
                             trade.fillPrice = currentPrice;
                             await trade.save();
@@ -236,16 +247,14 @@ function startTradeManager(conn) {
                                 });
                             }
                         }
-                        // Skip TP/SL checks — trade is not yet active
                         continue;
                     }
 
-                    // ── STALE TRADE WARNING (48h without TP1) ───────────────
-                    // Trades open for 48h+ without TP1 hit = capital locked, opportunity cost
+                    // ── STALE TRADE WARNING (48h) ─────────────────────
                     if (!trade.tp1Hit && trade.status === 'active') {
                         const hoursOpen = (Date.now() - new Date(trade.openTime)) / 3600000;
                         if (hoursOpen >= 48 && !trade._staleWarned) {
-                            trade._staleWarned = true; // in-memory flag (not persisted)
+                            trade._staleWarned = true;
                             await conn.sendMessage(trade.userJid, { text:
                                 `⏰ *STALE TRADE WARNING!*\n━━━━━━━━━━━━━━━━\n` +
                                 `🪙 *${cb}/USDT* ${de} *${dir}*\n\n` +
@@ -261,7 +270,7 @@ function startTradeManager(conn) {
                         }
                     }
 
-                    // ── TP1 HIT ─────────────────────────────────────────
+                    // ── TP1 HIT ───────────────────────────────────────
                     if (trade.tp1 && !trade.tp1Hit) {
                         const tp1v   = parseFloat(trade.tp1);
                         const tp1Hit = isLong ? currentPrice >= tp1v : currentPrice <= tp1v;
@@ -270,8 +279,8 @@ function startTradeManager(conn) {
                             if (isPaper) {
                                 const pQty = (trade.quantity || 0) * 0.33;
                                 const pPnl = Math.abs(tp1v - trade.entry) * pQty;
-                                await db.updatePaperBalance(trade.userJid, pPnl, pPnl > 0, false); // ✅ FIX: partial TP1
-                                trade.sl = trade.entry;   // move SL to break-even
+                                await db.updatePaperBalance(trade.userJid, pPnl, pPnl > 0, false);
+                                trade.sl = trade.entry;
                                 await trade.save();
                                 await conn.sendMessage(trade.userJid, { text:
                                     `🎯 *PAPER TP1 HIT!* 💰\n━━━━━━━━━━━━━━━━\n` +
@@ -299,7 +308,7 @@ function startTradeManager(conn) {
                         }
                     }
 
-                    // ── TP2 HIT ─────────────────────────────────────────
+                    // ── TP2 HIT ───────────────────────────────────────
                     if (trade.tp1Hit && !trade.tp2Hit && trade.tp2) {
                         const tp2v   = parseFloat(trade.tp2);
                         const tp2Hit = isLong ? currentPrice >= tp2v : currentPrice <= tp2v;
@@ -330,7 +339,7 @@ function startTradeManager(conn) {
                         }
                     }
 
-                    // ── DCA ZONE ─────────────────────────────────────────
+                    // ── DCA ZONE ──────────────────────────────────────
                     if (trade.dcaLevel === 0) {
                         const risk    = Math.abs(trade.entry - trade.sl);
                         const dcaZone = isLong
@@ -357,12 +366,10 @@ function startTradeManager(conn) {
                         }
                     }
 
-                    // ── TRAILING SL (Break-even) ──────────────────────────
+                    // ── TRAILING SL ───────────────────────────────────
                     if (currentSettings.trailingSl && !trade.tp1Hit) {
                         const risk     = Math.abs(trade.entry - trade.sl);
-                        const beTarget = isLong
-                            ? trade.entry + risk
-                            : trade.entry - risk;
+                        const beTarget = isLong ? trade.entry + risk : trade.entry - risk;
                         let trail = false;
                         if (isLong  && currentPrice >= beTarget && parseFloat(trade.sl) < trade.entry) { trade.sl = trade.entry; trail = true; }
                         if (!isLong && currentPrice <= beTarget && parseFloat(trade.sl) > trade.entry) { trade.sl = trade.entry; trail = true; }
@@ -378,7 +385,7 @@ function startTradeManager(conn) {
                         }
                     }
 
-                    // ── TP3 / SL HIT → CLOSE ─────────────────────────────
+                    // ── TP3 / SL HIT → CLOSE ─────────────────────────
                     let hitType = null, result = '';
                     const tp3v = parseFloat(trade.tp), slv = parseFloat(trade.sl);
                     if (isLong) {
@@ -400,6 +407,22 @@ function startTradeManager(conn) {
                             const pnlPct    = trade.marginUsed > 0 ? (profit / trade.marginUsed * 100) : 0;
                             await db.closeTrade(trade._id, result, pnlPct, profit);
                             await db.updatePaperBalance(trade.userJid, profit, result === 'WIN', result === 'BREAK-EVEN');
+
+                            // ── v7: Save close metadata for AI Backtesting module ──
+                            // We do this AFTER db.closeTrade so the document is updated
+                            // but closeMetadata fields are added additionally.
+                            try {
+                                await db.Trade.findByIdAndUpdate(trade._id, {
+                                    $set: {
+                                        closeType:       hitType,
+                                        closePrice:      currentPrice,
+                                        closeTime:       new Date(),
+                                        closeMethod:     'AUTO',   // AUTO = bot managed, MANUAL = user command
+                                        // Backtesting fields (dailyBias/tradeCategory/reasons saved at open time)
+                                    }
+                                });
+                            } catch (_metaErr) { /* non-critical — don't interrupt trade close */ }
+
                             const user = await db.getUser(trade.userJid);
                             await conn.sendMessage(trade.userJid, { text:
                                 `${emoji} *PAPER TRADE CLOSED!* ${hitType === 'TP3' ? '🎯' : '⛔'}\n━━━━━━━━━━━━━━━━\n` +
@@ -412,6 +435,18 @@ function startTradeManager(conn) {
                                 `📜 *.paperhistory* | 📊 *.margin*`,
                             });
                         } else {
+                            // ── v7: Save close metadata for real tracked trades ──
+                            try {
+                                await db.Trade.findByIdAndUpdate(trade._id, {
+                                    $set: {
+                                        closeType:   hitType,
+                                        closePrice:  currentPrice,
+                                        closeTime:   new Date(),
+                                        closeMethod: 'AUTO',
+                                    }
+                                });
+                            } catch (_metaErr) { /* non-critical */ }
+
                             const action = hitType === 'TP3'
                                 ? `• Position සම්පූර්ණයෙන් Close කරන්න\n• Profit Withdraw/Reinvest decide කරන්න`
                                 : `• Position Close කරන්න\n• Loss accept කරලා next setup බලන්න`;
@@ -435,14 +470,8 @@ function startTradeManager(conn) {
 
 // ─── Signal Scanner (Event-Driven) ────────────────────────────
 
-/**
- * Debounced scan runner.
- * Called when a 15m candle closes. Multiple coins close at the same
- * wall-clock second, so we collect all close events for 15 seconds
- * before running a single scan pass.
- */
 function scheduleDebounced() {
-    if (_debounceTimer) return;   // already waiting
+    if (_debounceTimer) return;
     _debounceTimer = setTimeout(async () => {
         _debounceTimer = null;
         await runSignalScan();
@@ -456,49 +485,54 @@ async function runSignalScan() {
         const setups = await getTopDownSetups();
         if (!setups || setups.length === 0) return;
 
-        const sent  = await getSentimentCached();
+        const sent = await getSentimentCached();
+
+        // ── Determine overall daily bias for the market ──────────
+        // Use the most common bias across found setups for header display.
+        const biasVotes = { BULLISH: 0, BEARISH: 0, RANGING: 0 };
+        setups.forEach(s => {
+            if (s.dailyBias) biasVotes[s.dailyBias.bias] = (biasVotes[s.dailyBias.bias] || 0) + 1;
+        });
+        const dominantBias = Object.entries(biasVotes).sort((a, b) => b[1] - a[1])[0];
+        const biasHeader   = dominantBias
+            ? `📅 Daily Bias Filter: *${dominantBias[0]}* ${dominantBias[0] === 'BULLISH' ? '🟢' : dominantBias[0] === 'BEARISH' ? '🔴' : '⚪'} (Only ${dominantBias[0] === 'BULLISH' ? 'LONGs' : dominantBias[0] === 'BEARISH' ? 'SHORTs' : 'All'} passed)\n`
+            : '';
+
         let msg = `🚀 *14-FACTOR AUTO SIGNAL ALERT* 🚀\n_Top ${setups.length} Best Setups Now_\n\n`;
-        msg += `🧠 *Market:* ${sent.overallSentiment} | ${sent.fngEmoji} F&G: ${sent.fngValue}\n\n`;
+        msg += `🧠 *Market:* ${sent.overallSentiment} | ${sent.fngEmoji} F&G: ${sent.fngValue}\n`;
+        msg += biasHeader + `\n`;
 
         setups.forEach((s, i) => {
-            const catTag   = s.tradeCategory ? `\n   📅 ${s.tradeCategory}` : '';
-            const orderTag = s.orderType
+            const catTag    = s.tradeCategory ? `\n   📅 ${s.tradeCategory}` : '';
+            const orderTag  = s.orderType
                 ? (s.orderType.includes('LIMIT') ? ' ⏳ LIMIT' : ' ⚡ MARKET')
                 : '';
-            const dayTag   = s.dailyTrend ? ` | Daily: ${s.dailyTrend} ${s.dailyAligned ? '✅' : '⚠️'}` : '';
-            const trapTag  = s.mmTrap && (s.mmTrap.bullTrap || s.mmTrap.bearTrap) ? ` 🪤` : '';
-            const sqzTag   = s.bbSqueeze && s.bbSqueeze.exploding ? ` 💥` : '';
+            const dayTag    = s.dailyBias ? ` | Daily: ${s.dailyBias.label}` : '';
+            const trapTag   = s.mmTrap && (s.mmTrap.bullTrap || s.mmTrap.bearTrap) ? ` 🪤` : '';
+            const sqzTag    = s.bbSqueeze && s.bbSqueeze.exploding ? ` 💥` : '';
+            const goldTag   = s.goldenConfluence ? ` ⭐` : '';
+            const biasWarn  = s.isExceptionCase ? ` ⚠️_Counter-bias scalp_` : '';
             msg +=
-                `*${i + 1}. #${s.coin}* - ${s.type} (Score: ${s.score} ⭐) ${s.sentEmoji || ''}${orderTag}${trapTag}${sqzTag}${catTag}\n` +
-                `   📍 $${s.price} | ADX: ${s.adx}${dayTag}\n` +
+                `*${i + 1}. #${s.coin}* - ${s.type} (Score: ${s.score} ⭐) ${s.sentEmoji || ''}${orderTag}${trapTag}${sqzTag}${goldTag}${catTag}\n` +
+                `   📍 $${s.price} | ADX: ${s.adx}${dayTag}${biasWarn}\n` +
                 `   ✔️ ${s.reasons}\n` +
                 `   🤖 .future ${s.coin} 15m\n\n`;
         });
         msg += `_⏱️ Next scan on 15m candle close | .set 1 off ගසා Stop කරන්න_`;
 
         await _connRef.sendMessage(_ownerJidRef, { text: msg.trim() });
-    } catch (_e) { /* silent — keep the listener alive */ }
+    } catch (_e) { /* silent — keep listener alive */ }
 }
 
-/**
- * Attach the 15m candle-close listener to binance.wsEvents.
- * Each time ANY watched coin closes its 15m bar the debounce fires.
- */
 function startSignalScanner(conn, ownerJid) {
     if (_scannerActive) return;
-
     _connRef       = conn;
     _ownerJidRef   = ownerJid;
     _scannerActive = true;
-
     _15mCloseHandler = () => scheduleDebounced();
     binance.wsEvents.on('15m_candle_close', _15mCloseHandler);
-
     console.log('[Scanner] ✅ Event-driven signal scanner started (listening for 15m closes).');
-
-    if (binance.isReady()) {
-        runSignalScan().catch(() => {});
-    }
+    if (binance.isReady()) { runSignalScan().catch(() => {}); }
 }
 
 function stopSignalScanner() {
@@ -507,21 +541,12 @@ function stopSignalScanner() {
         binance.wsEvents.off('15m_candle_close', _15mCloseHandler);
         _15mCloseHandler = null;
     }
-    if (_debounceTimer) {
-        clearTimeout(_debounceTimer);
-        _debounceTimer = null;
-    }
+    if (_debounceTimer) { clearTimeout(_debounceTimer); _debounceTimer = null; }
     _scannerActive = false;
     console.log('[Scanner] 🔴 Signal scanner stopped.');
 }
 
 // ─── Funding Rate Extreme Alert (.fundingalert) ───────────────
-/**
- * Checks funding rates for top 15 coins.
- * Extreme positive rate (>0.1%) = longs overloaded → SHORT squeeze risk.
- * Extreme negative rate (<-0.1%) = shorts overloaded → LONG squeeze risk.
- * These contrarian setups have the highest reward potential.
- */
 cmd({
     pattern: 'fundingalert', alias: ['funding', 'squeeze', 'fundrates'],
     desc: 'Extreme funding rate scanner — find squeeze setups',
@@ -544,13 +569,12 @@ async (conn, mek, m, { reply }) => {
             if (!d) return;
             const rate = parseFloat(d.lastFundingRate) * 100;
             const name = coin.replace('USDT','');
-            if (rate > 0.1)       extremes.push({ name, rate, dir: 'SHORT', label: `🔴 Longs overloaded → SHORT squeeze!` });
-            else if (rate < -0.1) extremes.push({ name, rate, dir: 'LONG',  label: `🟢 Shorts overloaded → LONG squeeze!` });
-            else if (rate > 0.05) mildLong.push({ name, rate });
+            if (rate > 0.1)        extremes.push({ name, rate, dir: 'SHORT', label: `🔴 Longs overloaded → SHORT squeeze!` });
+            else if (rate < -0.1)  extremes.push({ name, rate, dir: 'LONG',  label: `🟢 Shorts overloaded → LONG squeeze!` });
+            else if (rate > 0.05)  mildLong.push({ name, rate });
             else if (rate < -0.05) mildShort.push({ name, rate });
         });
-
-        extremes.sort((a,b) => Math.abs(b.rate) - Math.abs(a.rate));
+        extremes.sort((a, b) => Math.abs(b.rate) - Math.abs(a.rate));
 
         let msg = `💸 *FUNDING RATE EXTREME SCANNER*\n━━━━━━━━━━━━━━━━━━\n\n`;
         if (extremes.length === 0) {
@@ -603,6 +627,7 @@ async (conn, mek, m, { reply }) => {
 
         await reply(
             `🔍 *MANUAL SCAN ක්‍රියාත්මක වේ...*\n${wsStatus}\n${scanStatus}\n\n` +
+            `📅 *Daily Bias Filter:* ACTIVE — Only setups aligned with Daily Bias pass.\n` +
             `Top ${binance.isReady() ? binance.getWatchedCoins().length : 20} Coins Scan වෙමින් පවතී... ⏳\n` +
             `_(No REST polling — reads from live WS cache)_`
         );
@@ -612,38 +637,53 @@ async (conn, mek, m, { reply }) => {
         if (setups.length === 0) {
             return await reply(
                 `╔═══════════════════════════╗\n║  🔍 *MANUAL SCAN RESULTS*  ║\n╚═══════════════════════════╝\n\n` +
-                `Score 12/70 ට වඩා ලබාගත් Setups දැනට නොමැත. ⚪\n\nකිසිවේලාවකට පසු නැවත .scan ගසන්න.\n\n${scanStatus}`
+                `Score 12/90 ට වඩා & Daily Bias filter pass කළ Setups දැනට නොමැත. ⚪\n\n` +
+                `_Daily Bias filter active — counter-trend signals filtered out._\n` +
+                `_Ranging market / bias shift නොමැති විට setups දිස් වේ._\n\n` +
+                `කිසිවේලාවකට පසු නැවත .scan ගසන්න.\n\n${scanStatus}`
             );
         }
 
         const sent = await getSentimentCached();
+
+        // ── Gather bias summary across setups ────────────────────
+        const biasSet = [...new Set(setups.filter(s => s.dailyBias).map(s => s.dailyBias.label))];
+        const biasLine = biasSet.length ? `📅 *Daily Bias Filter Active:* ${biasSet.join(' | ')}\n` : '';
+
         let outMsg = `╔═══════════════════════════╗\n║  🎯 *TOP 5 SNIPER SETUPS*  ║\n╚═══════════════════════════╝\n\n`;
         outMsg += `🧠 *Market Sentiment:* ${sent.overallSentiment}\n`;
-        outMsg += `${sent.fngEmoji} F&G: ${sent.fngValue} | ₿ BTC.D: ${sent.btcDominance}% | 📰 ${sent.newsSentimentScore > 0 ? '+' : ''}${sent.newsSentimentScore}\n\n`;
+        outMsg += `${sent.fngEmoji} F&G: ${sent.fngValue} | ₿ BTC.D: ${sent.btcDominance}% | 📰 ${sent.newsSentimentScore > 0 ? '+' : ''}${sent.newsSentimentScore}\n`;
+        outMsg += biasLine + `\n`;
 
         setups.forEach((s, i) => {
-            const mSweep    = s.liquiditySweep !== 'None'  ? `\n   💧 ${s.liquiditySweep}` : '';
-            const mChoch    = s.choch !== 'None'           ? `\n   🔄 ${s.choch}` : '';
-            const mChoch5m  = s.choch5m && s.choch5m !== 'None' ? `\n   ⚡ 5m: ${s.choch5m}` : '';
-            const catLine   = s.tradeCategory              ? `\n   📅 ${s.tradeCategory}` : '';
-            const orderTag  = s.orderType
+            const mSweep   = s.liquiditySweep !== 'None'       ? `\n   💧 ${s.liquiditySweep}` : '';
+            const mChoch   = s.choch !== 'None'                ? `\n   🔄 ${s.choch}` : '';
+            const mChoch5m = s.choch5m && s.choch5m !== 'None' ? `\n   ⚡ 5m: ${s.choch5m}` : '';
+            const catLine  = s.tradeCategory                   ? `\n   📅 ${s.tradeCategory}` : '';
+            const orderTag = s.orderType
                 ? (s.orderType.includes('LIMIT') ? '\n   📋 ⏳ LIMIT ORDER' : '\n   📋 ⚡ MARKET ORDER')
                 : '';
-            const dayTag    = s.dailyTrend ? `\n   📅 Daily: ${s.dailyTrend} ${s.dailyAligned ? '✅' : '⚠️'}` : '';
-            const trapTag   = s.mmTrap && (s.mmTrap.bullTrap || s.mmTrap.bearTrap)
+            const dayTag   = s.dailyBias
+                ? `\n   📅 Daily: ${s.dailyBias.label} ${s.dailyAligned ? '✅' : '⚠️'}`
+                : (s.dailyTrend ? `\n   📅 Daily: ${s.dailyTrend} ${s.dailyAligned ? '✅' : '⚠️'}` : '');
+            const regTag   = s.regimeLabel ? `\n   📊 Regime: ${s.regimeLabel}` : '';
+            const goldTag  = s.goldenConfluence ? `\n   ⭐ GOLDEN CONFLUENCE (SMC + Retail Both Confirmed!)` : '';
+            const trapTag  = s.mmTrap && (s.mmTrap.bullTrap || s.mmTrap.bearTrap)
                 ? `\n   🪤 ${s.mmTrap.display}` : '';
-            const sqzTag    = s.bbSqueeze && (s.bbSqueeze.exploding || s.bbSqueeze.isSqueezing)
+            const sqzTag   = s.bbSqueeze && (s.bbSqueeze.exploding || s.bbSqueeze.isSqueezing)
                 ? `\n   ${s.bbSqueeze.exploding ? '💥' : '⚡'} ${s.bbSqueeze.display}` : '';
-            const tfTag     = s.tf3Align && s.tf3Align.aligned
+            const tfTag    = s.tf3Align && s.tf3Align.aligned
                 ? `\n   ✅ ${s.tf3Align.display}` : '';
-            const confTag   = `\n   🔒 Confirmations: ${s.confScore || s.coreConf}/${s.confScore ? '13' : '4'} ${s.confGate ? '✅' : ''}`;
-            const wyckTag   = s.reasons && s.reasons.includes('Wyckoff') ? `\n   🌊 ${s.reasons.split(',').find(r=>r.includes('Wyckoff'))?.trim()}` : '';
-            const ichiTag   = s.reasons && s.reasons.includes('Ichimoku') ? `\n   ☁️ ${s.reasons.split(',').find(r=>r.includes('Ichimoku'))?.trim()}` : '';
+            const confTag  = `\n   🔒 Confirmations: ${s.confScore || s.coreConf}/${s.confScore ? '14' : '4'} ${s.confGate ? '✅' : ''}`;
+            const biasExc  = s.isExceptionCase ? `\n   ⚠️ _Counter-bias scalp (score override)_` : '';
+            const wyckTag  = s.reasons && s.reasons.includes('Wyckoff') ? `\n   🌊 ${s.reasons.split(',').find(r=>r.includes('Wyckoff'))?.trim()}` : '';
+            const ichiTag  = s.reasons && s.reasons.includes('Ichimoku') ? `\n   ☁️ ${s.reasons.split(',').find(r=>r.includes('Ichimoku'))?.trim()}` : '';
+
             outMsg +=
                 `*${i + 1}. #${s.coin}* - ${s.type} (Score: ${s.score} ⭐) ${s.sentEmoji || ''}\n` +
                 `   📍 Price: $${s.price} | 🔥 ADX: ${s.adx}\n` +
                 `   🎯 TP1: $${s.tp1} | TP2: $${s.tp2} | SL: $${s.sl}\n` +
-                `   ✔️ ${s.reasons}${mSweep}${mChoch}${mChoch5m}${dayTag}${trapTag}${sqzTag}${tfTag}${wyckTag}${ichiTag}${catLine}${orderTag}${confTag}\n` +
+                `   ✔️ ${s.reasons}${mSweep}${mChoch}${mChoch5m}${dayTag}${regTag}${goldTag}${trapTag}${sqzTag}${tfTag}${wyckTag}${ichiTag}${catLine}${orderTag}${confTag}${biasExc}\n` +
                 `   🤖 *.future ${s.coin} 15m*\n\n`;
         });
         outMsg += `${wsStatus}\n${scanStatus}`;
@@ -653,16 +693,9 @@ async (conn, mek, m, { reply }) => {
     } catch (e) { await reply('❌ Error: ' + e.message); }
 });
 
-// ─── Exports for settings.js ───────────────────────────────────
-function getScannerStatus() {
-    return _scannerActive;
-}
+// ─── Exports ───────────────────────────────────────────────────
+function getScannerStatus() { return _scannerActive; }
 
-/**
- * Called by settings.js when the user enables the scanner.
- * Initialises the WebSocket (idempotent), starts trade manager,
- * then attaches the event-driven signal scanner.
- */
 async function startScannerFromSettings(conn, ownerJid) {
     if (_scannerActive) return false;
     await binance.initWebSocketStreams(30);
@@ -678,12 +711,6 @@ function stopScannerFromSettings() {
     return true;
 }
 
-/**
- * ✅ FIX: Auto-start just the trade manager on every bot connect.
- * Called from index.js after 'connection.open' fires so TP/SL monitoring
- * works immediately without needing the user to run .set 1 on.
- * Safe to call multiple times — startTradeManager() is idempotent.
- */
 function autoStartTradeManager(conn) {
     startTradeManager(conn);
 }
