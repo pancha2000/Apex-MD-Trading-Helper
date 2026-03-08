@@ -412,6 +412,21 @@ ${aData.tf3Align.display}
 ${aData.weeklyTgts ? aData.weeklyTgts.display : '🗓️ Weekly targets: N/A'}
 ${aData.cmeGap.display}
 
+━━━━━━━━━━━━━━━━━━
+*🔮 v7 PRO VVIP SIGNALS*
+━━━━━━━━━━━━━━━━━━
+${aData.momentumShift.display}
+${aData.bos.display !== 'None' ? '🔺 *BOS:* ' + aData.bos.display : ''}
+${aData.advCandles.display !== '⚪ No pattern' ? '🕯️ *Pattern:* ' + aData.advCandles.display : ''}
+${aData.mfi.display}
+${aData.roc.display}
+${aData.cci.display}
+${aData.gannAngles.display}
+${aData.renko.display}
+${aData.dynamicSR.display}
+${aData.fibLevels.display}
+${aData.moonCycle.display}
+
 *🔬 5m MTF:*
 ${aData.mtf5m.status}
 
