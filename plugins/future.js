@@ -35,18 +35,37 @@ async (conn, mek, m, { reply, args }) => {
 
         // 🧠 1. Analyzer එකෙන් Data ගැනීම (කලින් පේළි 100ක වැඩේ එක පේළියෙන්)
         const aData = await analyzer.run14FactorAnalysis(coin, timeframe);
-        // 🌐 Parallel fetch - all external data එකවර ගන්නවා (speed)
+        // 🌐 Parallel fetch - all external data at once, each with 12s timeout
+        // ✅ FIX: Individual .catch() — one API fail won't abort the entire analysis
+        const withTimeout = (p, ms, fallback) =>
+            Promise.race([p, new Promise(r => setTimeout(() => r(fallback), ms))]);
+
         const [liqData, whaleWalls, fundingRate, sentiment] = await Promise.all([
-            binance.getLiquidationData(coin),
-            binance.getLiquidityWalls(coin),
-            binance.getFundingRate(coin),
-            binance.getMarketSentiment(coin),
+            withTimeout(binance.getLiquidationData(coin),  12000, { sentiment: 'N/A', liqLevel: 'N/A' }),
+            withTimeout(binance.getLiquidityWalls(coin),   12000, { supportWall: 'N/A', resistWall: 'N/A', supportVol: 'N/A', resistVol: 'N/A' }),
+            withTimeout(binance.getFundingRate(coin),      10000, 'N/A'),
+            withTimeout(binance.getMarketSentiment(coin),  12000, {
+                fngValue: 50, fngLabel: 'Neutral', fngEmoji: '⚪',
+                btcDominance: '50.0', newsSentimentScore: 0, coinNewsHits: 0,
+                newsHeadlines: [], overallSentiment: '⚪ NEUTRAL',
+                tradingBias: 'Neutral', totalBias: '0',
+                summary: 'Market data unavailable'
+            }),
         ]);
 
-        // 🔬 8-Factor Advanced Entry Confirmation (parallel, non-blocking)
-        const entryConf = await confirmations.runAllConfirmations(
-            coin, aData.direction, config.LUNAR_API || null
-        );
+        // 🔬 8-Factor Entry Confirmation with 20s timeout
+        // ✅ FIX: Timeout prevents 8 external APIs from hanging the analysis
+        const confFallback = {
+            totalScore: 0, confirmationStrength: 'N/A',
+            display: '⚪ Confirmation data unavailable (timeout)',
+            usdtDom: { signal: 'N/A' }, oiChange: { signal: 'N/A' },
+            cvd: { signal: 'N/A' }, btcCorr: { signal: 'N/A' },
+            pcr: { signal: 'N/A' }, netflow: { signal: 'N/A' }
+        };
+        const entryConf = await Promise.race([
+            confirmations.runAllConfirmations(coin, aData.direction, config.LUNAR_API || null),
+            new Promise(r => setTimeout(() => r(confFallback), 20000))
+        ]);
 
         // ⚙️ 2. Settings & RRR Filter
         const settings = await db.getSettings();
@@ -188,12 +207,39 @@ STRICT OUTPUT RULES:
 
 EXACT JSON (copy this structure, fill values):
 {"direction":"${aData.direction}","emoji":"🟢","entry":"${aData.entryPrice}","tp1":"${aData.tp1}","tp2":"${aData.tp2}","sl":"${aData.sl}","rrr":"1:${rrrStr}","leverage":"${levText}","margin":"${marginText}","qty":"${qtyText}","risk":"${riskText}","confidence":"65%","trend":"Bullish trend short description","smc_summary":"SMC summary one line","sentiment_note":"Sentiment impact one line"}`;
-        const aiRes = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-            model: "llama-3.3-70b-versatile",
-            messages: [{ role: "user", content: prompt }]
-        }, { headers: { Authorization: `Bearer ${config.GROQ_API}`, 'Content-Type': 'application/json' } });
+        // ✅ FIX: Added 25s timeout — GROQ was hanging indefinitely without it
+        let aiRes;
+        try {
+            aiRes = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+                model: "llama-3.3-70b-versatile",
+                messages: [{ role: "user", content: prompt }],
+                max_tokens: 500,
+                temperature: 0.3
+            }, {
+                headers: { Authorization: `Bearer ${config.GROQ_API}`, 'Content-Type': 'application/json' },
+                timeout: 25000
+            });
+        } catch (groqErr) {
+            console.error('[GROQ] Failed:', groqErr.message);
+            // Fallback: skip AI, use analyzer data directly
+            aiRes = null;
+        }
 
         // ─── Ultra-Robust AI JSON Parser ───
+        // ✅ FIX: If GROQ failed/timed out, use fallback data object directly
+        if (!aiRes) {
+            var data = {
+                direction: aData.direction,
+                emoji: aData.direction === 'LONG' ? '🟢' : '🔴',
+                confidence: `${Math.round(50 + aData.score * 5)}%`,
+                trend: aData.mainTrend + ' | ' + aData.marketState,
+                smc_summary: 'AI unavailable — technical data used',
+                sentiment_note: sentiment.tradingBias,
+                entry: aData.entryPrice, tp1: aData.tp1, tp2: aData.tp2,
+                sl: aData.sl, rrr: `1:${rrrStr}`,
+                leverage: levText, margin: marginText, qty: qtyText, risk: riskText
+            };
+        } else {
         const rawContent = aiRes.data.choices[0].message.content;
 
         // Step 1: Strip markdown fences
@@ -249,6 +295,7 @@ EXACT JSON (copy this structure, fill values):
                 };
             }
         }
+        } // end if(!aiRes) else block
         const sentimentNote = data.sentiment_note || sentiment.tradingBias;
 
         // ✅ FIX: Always use analyzer values for trade params — AI only provides direction/confidence/text
@@ -387,5 +434,14 @@ ${entryConf.display}
 
         await reply(out.trim());
         await m.react('✅');
-    } catch (e) { await reply('❌ Error: ' + e.message); }
+    } catch (e) {
+        console.error('[future.js] CRASH:', e.stack || e.message);
+        const errMsg = e.message || String(e) || 'Unknown error';
+        await reply(`❌ *Analysis Failed*
+
+${errMsg}
+
+💡 Try again or check server logs.`).catch(() => {});
+        try { await m.react('❌'); } catch(_) {}
+    }
 });
