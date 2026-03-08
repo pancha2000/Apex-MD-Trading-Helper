@@ -135,7 +135,7 @@ async (conn, mek, m, { reply, args }) => {
             (aData.direction === 'SHORT' && parseFloat(sentiment.totalBias) <= -0.5);
 
         // 🤖 4. Enhanced AI Prompt (Sentiment + Technical combined)
-        const headlineStr = sentiment.newsHeadlines.slice(0,3).join(' | ');
+        const headlineStr = (sentiment.newsHeadlines || []).slice(0,3).join(' | ');
         const prompt = `Analyze ${coin} FUTURES trade signal. Current: $${aData.priceStr}
 
 === TECHNICAL (${aData.maxScore}-FACTOR SCORE: ${aData.score}/${aData.maxScore}) ===
@@ -226,15 +226,16 @@ EXACT JSON (copy this structure, fill values):
         }
 
         // ─── Ultra-Robust AI JSON Parser ───
-        // ✅ FIX: If GROQ failed/timed out, use fallback data object directly
+        // ✅ FIX: Declare data BEFORE if/else so it's accessible after the block
+        let data;
         if (!aiRes) {
-            var data = {
+            data = {
                 direction: aData.direction,
                 emoji: aData.direction === 'LONG' ? '🟢' : '🔴',
                 confidence: `${Math.round(50 + aData.score * 5)}%`,
                 trend: aData.mainTrend + ' | ' + aData.marketState,
                 smc_summary: 'AI unavailable — technical data used',
-                sentiment_note: sentiment.tradingBias,
+                sentiment_note: sentiment.tradingBias || 'Neutral',
                 entry: aData.entryPrice, tp1: aData.tp1, tp2: aData.tp2,
                 sl: aData.sl, rrr: `1:${rrrStr}`,
                 leverage: levText, margin: marginText, qty: qtyText, risk: riskText
@@ -254,8 +255,7 @@ EXACT JSON (copy this structure, fill values):
         }
         let jm = raw.slice(braceStart, braceEnd + 1);
 
-        // Step 3: Try direct parse
-        let data;
+        // Step 3: Try direct parse (uses outer-scoped `data` variable)
         try {
             data = JSON.parse(jm);
         } catch(e1) {
@@ -291,12 +291,12 @@ EXACT JSON (copy this structure, fill values):
                     confidence: extract('confidence') || '60%',
                     trend: extract('trend') || 'AI analysis unavailable',
                     smc_summary: extract('smc_summary') || '',
-                    sentiment_note: extract('sentiment_note') || sentiment.tradingBias
+                    sentiment_note: extract('sentiment_note') || (sentiment && sentiment.tradingBias) || 'Neutral'
                 };
             }
         }
         } // end if(!aiRes) else block
-        const sentimentNote = data.sentiment_note || sentiment.tradingBias;
+        const sentimentNote = (data && data.sentiment_note) || (sentiment && sentiment.tradingBias) || 'Neutral';
 
         // ✅ FIX: Always use analyzer values for trade params — AI only provides direction/confidence/text
         data.entry     = aData.entryPrice;
