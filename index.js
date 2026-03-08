@@ -121,8 +121,10 @@ async function startBot() {
 
         try {
             let mek;
-            try { mek = await serialize(msg, conn); } catch(e) {}
-            if (!mek) { try { mek = await serialize(conn, msg); } catch(e) {} }
+            // ✅ BUG 7 FIX: Removed swapped fallback serialize(conn, msg) which caused a crash.
+            // functions.js expects (msg, conn). If it fails, skip the message entirely.
+            try { mek = await serialize(msg, conn); } catch(e) { mek = null; }
+            if (!mek) return;
             if (!mek) return;
 
             const body = mek.body || '';

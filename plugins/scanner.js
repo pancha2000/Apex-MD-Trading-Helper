@@ -244,8 +244,11 @@ function startTradeManager(conn) {
                     // Trades open for 48h+ without TP1 hit = capital locked, opportunity cost
                     if (!trade.tp1Hit && trade.status === 'active') {
                         const hoursOpen = (Date.now() - new Date(trade.openTime)) / 3600000;
-                        if (hoursOpen >= 48 && !trade._staleWarned) {
-                            trade._staleWarned = true; // in-memory flag (not persisted)
+                        // ✅ BUG 5 FIX: Use persisted `trade.staleWarned` (not in-memory `_staleWarned`)
+                        // Old: trade._staleWarned was lost on bot restart → warning re-fired every restart
+                        if (hoursOpen >= 48 && !trade.staleWarned) {
+                            trade.staleWarned = true;  // persisted to MongoDB
+                            await trade.save();
                             await conn.sendMessage(trade.userJid, { text:
                                 `⏰ *STALE TRADE WARNING!*\n━━━━━━━━━━━━━━━━\n` +
                                 `🪙 *${cb}/USDT* ${de} *${dir}*\n\n` +
@@ -270,7 +273,7 @@ function startTradeManager(conn) {
                             if (isPaper) {
                                 const pQty = (trade.quantity || 0) * 0.33;
                                 const pPnl = Math.abs(tp1v - trade.entry) * pQty;
-                                await db.updatePaperBalance(trade.userJid, pPnl, pPnl > 0, false); // ✅ FIX: partial TP1
+                                await db.updatePaperBalance(trade.userJid, pPnl, pPnl > 0, false, false); // ✅ BUG 2 FIX: countTrade=false (partial TP1)
                                 trade.sl = trade.entry;   // move SL to break-even
                                 await trade.save();
                                 await conn.sendMessage(trade.userJid, { text:
@@ -309,7 +312,7 @@ function startTradeManager(conn) {
                             if (isPaper) {
                                 const pQty = (trade.quantity || 0) * 0.33;
                                 const pPnl = Math.abs(tp2v - trade.entry) * pQty;
-                                await db.updatePaperBalance(trade.userJid, pPnl, false, false);
+                                await db.updatePaperBalance(trade.userJid, pPnl, true, false, false); // ✅ BUG 1+2 FIX: isWin=true, countTrade=false (partial)
                                 await conn.sendMessage(trade.userJid, { text:
                                     `🎯 *PAPER TP2 HIT!* 🔥\n━━━━━━━━━━━━━━━━\n` +
                                     `🪙 *${cb}/USDT* ${de} *${dir}*\n\n` +
@@ -415,7 +418,11 @@ function startTradeManager(conn) {
                             const action = hitType === 'TP3'
                                 ? `• Position සම්පූර්ණයෙන් Close කරන්න\n• Profit Withdraw/Reinvest decide කරන්න`
                                 : `• Position Close කරන්න\n• Loss accept කරලා next setup බලන්න`;
-                            await db.closeTrade(trade._id, result, 0, 0);
+                            // ✅ BUG 4 FIX: Real trade PnL was always saved as 0 (hardcoded).
+                            // Now calculates actual PnL% from entry price.
+                            const priceDiff  = isLong ? currentPrice - trade.entry : trade.entry - currentPrice;
+                            const realPnlPct = trade.entry > 0 ? (priceDiff / trade.entry) * 100 : 0;
+                            await db.closeTrade(trade._id, result, parseFloat(realPnlPct.toFixed(2)), 0);
                             await conn.sendMessage(trade.userJid, { text:
                                 `${emoji} *${hitType} HIT!* ${hitType === 'TP3' ? '🎉' : '⛔'}\n━━━━━━━━━━━━━━━━\n` +
                                 `🪙 *${cb}/USDT* ${de} *${dir}*\n\n` +
