@@ -53,18 +53,21 @@ async (conn, mek, m, { reply, args }) => {
             }),
         ]);
 
-        // 🔬 8-Factor Entry Confirmation with 20s timeout
-        // ✅ FIX: Timeout prevents 8 external APIs from hanging the analysis
+        // 🔬 Full-Spectrum Confirmation Engine (26 factors: 12 external + 14 local)
+        // ✅ aData passed in — local indicators use pre-computed data (zero extra API calls)
         const confFallback = {
             totalScore: 0, confirmationStrength: 'N/A',
             display: '⚪ Confirmation data unavailable (timeout)',
             usdtDom: { signal: 'N/A' }, oiChange: { signal: 'N/A' },
             cvd: { signal: 'N/A' }, btcCorr: { signal: 'N/A' },
-            pcr: { signal: 'N/A' }, netflow: { signal: 'N/A' }
+            pcr: { signal: 'N/A' }, netflow: { signal: 'N/A' },
+            lsRatio: { signal: 'N/A' }, fundingMomentum: { signal: 'N/A' },
+            orderBook: { signal: 'N/A' }, whaleActivity: { signal: 'N/A' },
+            local: null, isStronglyConfirmed: false, isConflicting: false,
         };
         const entryConf = await Promise.race([
-            confirmations.runAllConfirmations(coin, aData.direction, config.LUNAR_API || null),
-            new Promise(r => setTimeout(() => r(confFallback), 20000))
+            confirmations.runAllConfirmations(coin, aData.direction, config.LUNAR_API || null, aData),
+            new Promise(r => setTimeout(() => r(confFallback), 25000))
         ]);
 
         // ⚙️ 2. Settings & RRR Filter
