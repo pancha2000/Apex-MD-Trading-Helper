@@ -1,30 +1,20 @@
 /**
  * ================================================================
- * PAPER TRADE COMMAND (.paper / .pt)  ·  Institutional-Grade v7
+ * PAPER TRADE COMMAND (.paper / .pt)
  * ================================================================
- * v7 UPGRADES — Trade Metadata Logging for AI Backtesting:
+ * Analysis reply + .paper → Virtual Binance-style position opens
+ * Uses margin setting → calculates leverage, qty, marginUsed
+ * .myptrades → Shows all open paper positions with live P&L
  *
- *  1. parseAnalysisMsg() now extracts:
- *       • reasons       — the ✔️ factors string (WHAT triggered the trade)
- *       • dailyBias     — Daily Bias label (BULLISH/BEARISH/RANGING)
- *       • regimeLabel   — ADX regime label (TRENDING/RANGING/TRANSITION)
- *       • goldenConf    — Golden Confluence flag (true/false)
- *       tradeCategory already existed — now included in backtesting export
+ * ✅ FIX: Order type (LIMIT/MARKET) and trade status (pending/active)
+ *         are now read directly from the analyzer's orderSuggestion
+ *         output in the quoted message — NOT guessed from price proximity.
  *
- *  2. db.saveTrade() receives all backtesting fields:
- *       { dailyBias, tradeCategory, reasons, regimeLabel, goldenConf }
- *
- *  3. .closepaper saves close metadata:
- *       { closeType: 'MANUAL', closePrice, closeTime, closeMethod }
- *
- *  4. Scanner auto-closes (TP/SL) already updated in scanner.js
- *     to write closeType/closePrice/closeTime/closeMethod = 'AUTO'
- *
- *  5. Display: dailyBias and Golden Confluence shown in open confirmation.
- *
- * ================================================================
- * All prior logic (order type detection, position sizing, myptrades,
- * paperhistory, resetpaper) preserved exactly.
+ *         Priority:
+ *           1. Parse "📋 *Order:*" line from the quoted analysis message
+ *              (set by analyzer.js → orderSuggestion.type)
+ *           2. Fallback: re-derive from live price vs entry (tight 0.3% band)
+ *           3. Last resort: MARKET / active (safe default)
  * ================================================================
  */
 const { cmd } = require('../lib/commands');
@@ -46,12 +36,8 @@ async function getLivePrice(coin) {
 // ─── Helper: Parse analysis message ──────────────────────────────
 /**
  * Extracts all trade parameters from a .future / .spot analysis reply.
- *
- * v7: Also extracts backtesting metadata fields:
- *   • reasons       — ✔️ score reasons line
- *   • dailyBias     — Daily Bias string if present in message
- *   • regimeLabel   — ADX regime label if present
- *   • goldenConf    — true if Golden Confluence was noted
+ * NEW: also extracts `parsedOrderType` ('LIMIT' | 'MARKET' | null)
+ * from the "📋 *Order:*" line that analyzer.js writes via orderSuggestion.
  */
 function parseAnalysisMsg(text) {
     // ── Coin ──────────────────────────────────────────────────────
@@ -62,6 +48,8 @@ function parseAnalysisMsg(text) {
     const coin = (coinMatch[1]).replace('USDT','') + 'USDT';
 
     // ── Direction ─────────────────────────────────────────────────
+    // Read ONLY from "Smart Entry" or the explicit direction line to avoid
+    // false hits from reason strings like "Short OB 🔴" or "Bear Breaker"
     const smartEntryMatch = text.match(/Smart Entry[^\n]*?(LONG|SHORT)/i)
         || text.match(/\*?(LONG|SHORT)\*?\s*$|direction[":\s]*(LONG|SHORT)/im);
     let direction = 'LONG';
@@ -78,7 +66,7 @@ function parseAnalysisMsg(text) {
     if (!entryMatch) return null;
     const entry = parseFloat(entryMatch[1].replace(/,/g,''));
 
-    // ── SL ────────────────────────────────────────────────────────
+    // ── SL ───────────────────────────────────────────────────────
     const slMatch = text.match(/SL[^:]*:\s*\$?([\d,.]+)/i)
         || text.match(/\|SL:([\d.]+)/i);
     if (!slMatch) return null;
@@ -114,72 +102,47 @@ function parseAnalysisMsg(text) {
         || text.match(/\b(15m|1h|4h|1d|5m|1w)\b/i);
     const timeframe = tfMatch ? tfMatch[1] : '15m';
 
-    // ── Trade Category ────────────────────────────────────────────
+    // ── Trade Category (Sniper Edition) ──────────────────────────
+    // Reads the MTF classification label produced by analyzer.js
     const categoryMatch = text.match(/(📅 SWING TRADE[^\n]*|🌅 INTRADAY TRADE[^\n]*|⚡ HIGH-PROB SCALP[^\n]*|📊 STANDARD SETUP[^\n]*)/);
     const tradeCategory = categoryMatch ? categoryMatch[1].trim() : null;
 
-    // ── Order Type ────────────────────────────────────────────────
+    // ── ✅ ORDER TYPE (THE CRITICAL FIX) ─────────────────────────
+    // The analyzer writes: 📋 *Order:*    LIMIT ORDER ⏳ — reason
+    //                   or 📋 *Order:*    MARKET ORDER 🟢 — reason
+    //
+    // We read THIS line to determine order type — NOT the live price heuristic.
+    //
+    // Patterns covered:
+    //   future.js  → 📋 *Order:*    LIMIT ORDER ⏳ — ...
+    //   spot.js    → 📋 Order: LIMIT ORDER ⏳
+    //   any format → as long as "Order" is followed by LIMIT/MARKET
     const orderLineMatch =
         text.match(/📋\s*\*?Order[^:]*:\*?\s*(LIMIT ORDER|MARKET ORDER)/i) ||
         text.match(/Order[^\n:]*:\s*[^\n]*(LIMIT ORDER|MARKET ORDER)/i);
+
     let parsedOrderType = null;
     if (orderLineMatch) {
         const raw = orderLineMatch[1].toUpperCase();
         parsedOrderType = raw.includes('LIMIT') ? 'LIMIT' : 'MARKET';
     }
 
-    // ════════════════════════════════════════════════════════════
-    // v7 NEW: BACKTESTING METADATA EXTRACTION
-    // ════════════════════════════════════════════════════════════
-
-    // ── Reasons (score factors) ───────────────────────────────────
-    // The analysis message always contains a "✔️ factor1, factor2..." line.
-    // This is the single most important field for backtesting — it tells
-    // the AI backtester WHAT signals were active when the trade was taken.
-    const reasonsMatch = text.match(/✔️\s*([^\n]+)/);
-    const reasons = reasonsMatch ? reasonsMatch[1].trim() : null;
-
-    // ── Daily Bias ────────────────────────────────────────────────
-    // Parses the Daily Bias line if future.js / spot.js includes it.
-    // Format: "📅 Daily Bias: BULLISH 🟢" or "Daily: BULLISH 🟢"
-    // Also catches the simpler dailyTrend format: "Daily: Bullish 🟢"
-    const dailyBiasMatch =
-        text.match(/Daily\s+Bias[:\s]*(BULLISH|BEARISH|RANGING)[^\n]*/i) ||
-        text.match(/📅\s+Daily[:\s]*(Bullish|Bearish|Ranging|BULLISH|BEARISH|RANGING)[^\n]*/i) ||
-        text.match(/Daily[:\s]*(Bullish|Bearish)[^\n]*/i);
-    const dailyBias = dailyBiasMatch
-        ? dailyBiasMatch[1].toUpperCase()
-        : null;  // null if not present in message (will be stored as null)
-
-    // ── Regime Label ─────────────────────────────────────────────
-    // Parses "Regime: TRENDING (ADX 28.3)" or similar.
-    const regimeMatch = text.match(/Regime[:\s]*(TRENDING|RANGING|TRANSITION)[^\n]*/i);
-    const regimeLabel = regimeMatch ? regimeMatch[1].toUpperCase() : null;
-
-    // ── Golden Confluence Flag ────────────────────────────────────
-    // True if the message contains the Golden Confluence bonus marker.
-    const goldenConf = /GOLDEN CONFLUENCE/i.test(text);
-
     return {
         coin, direction, entry, sl,
         tp1, tp: finalTp, tp3,
         analysisLev, score, timeframe,
         tradeCategory,
-        parsedOrderType,
-        // v7 backtesting fields
-        reasons,
-        dailyBias,
-        regimeLabel,
-        goldenConf,
+        parsedOrderType,   // ← new: 'LIMIT' | 'MARKET' | null
     };
 }
 
-// ─── Calculate position sizing ────────────────────────────────────
+// ─── Calculate position sizing (Binance Risk-Based — safe capped version) ────
 function calcPosition(margin, entry, sl, direction, analysisLev, freeBalance = null) {
     const available = freeBalance !== null ? freeBalance : margin;
     const slDist    = Math.abs(entry - sl);
     const slDistPct = slDist / entry;
 
+    // 2% risk on TOTAL capital (risk amount stays fixed)
     const riskAmt   = margin * 0.02;
     let quantity    = slDist > 0 ? riskAmt / slDist : 0;
 
@@ -187,6 +150,7 @@ function calcPosition(margin, entry, sl, direction, analysisLev, freeBalance = n
     const leverage  = analysisLev || Math.min(Math.ceil(rawLev), 100);
     let marginUsed  = quantity > 0 ? (quantity * entry) / leverage : 0;
 
+    // Cap marginUsed to 20% of available balance per trade (safety rule)
     const maxMargin = available * 0.20;
     if (marginUsed > maxMargin && maxMargin > 0) {
         const scaleFactor = maxMargin / marginUsed;
@@ -194,7 +158,8 @@ function calcPosition(margin, entry, sl, direction, analysisLev, freeBalance = n
         marginUsed  = maxMargin;
     }
 
-    const minMargin = 0.50;
+    // Minimum viable trade check
+    const minMargin = 0.50; // $0.50 minimum
     if (marginUsed < minMargin) {
         return { riskAmt: 0, quantity: 0, leverage, marginUsed: 0, slDist, tooSmall: true };
     }
@@ -228,10 +193,9 @@ cmd({
             coin, direction, entry, sl, tp1, tp, tp3,
             analysisLev, score, timeframe,
             tradeCategory, parsedOrderType,
-            // v7 backtesting fields
-            reasons, dailyBias, regimeLabel, goldenConf,
         } = parsed;
 
+        // Stablecoin guard
         const STABLES = ['USDCUSDT','BUSDUSDT','DAIUSDT','TUSDUSDT','USDPUSDT','FRAXUSDT'];
         if (STABLES.includes(coin)) {
             return await reply(`❌ *${coin.replace('USDT','')} Stablecoin!*\nStablecoins paper trade කරන්න බෑ.`);
@@ -239,11 +203,13 @@ cmd({
 
         if (!tp) return await reply('❌ TP price detect නොවිණ. .future/.spot analysis message reply කරන්න.');
 
+        // Margin check
         const userMargin = await db.getMargin(m.sender);
         if (!userMargin || userMargin <= 0) {
             return await reply(`❌ Capital set කර නැහැ!\n*.margin <amount>* දාලා capital set කරන්න.\nඋදා: .margin 1000`);
         }
 
+        // Check if already have active/pending paper trade for this coin
         const existing = await db.Trade.findOne({
             userJid: m.sender, coin, isPaper: true, status: { $in: ['active', 'pending'] }
         });
@@ -256,6 +222,7 @@ cmd({
             );
         }
 
+        // Limit: max 5 open paper trades
         const openCount = await db.Trade.countDocuments({
             userJid: m.sender, isPaper: true, status: { $in: ['active', 'pending'] }
         });
@@ -263,6 +230,7 @@ cmd({
             return await reply('⚠️ Maximum 5 paper trades open කරන්න පුළුවන්.\n.myptrades ලෙස close/view කරන්න.');
         }
 
+        // Calculate free (available) balance = total - locked in open trades
         const user = await db.getUser(m.sender);
         const openTrades = await db.Trade.find({
             userJid: m.sender, isPaper: true, status: { $in: ['active','pending'] }
@@ -293,70 +261,86 @@ cmd({
             );
         }
 
+        // Get live price (used for display and fallback order-type detection)
         const livePrice = await getLivePrice(coin);
 
-        // ── Order Type & Status Determination ────────────────────
-        let orderType, tradeStatus;
+        // ═══════════════════════════════════════════════════════════
+        // ✅ ORDER TYPE & STATUS DETERMINATION — FIXED LOGIC
+        // ═══════════════════════════════════════════════════════════
+        //
+        // Priority 1 — Analyzer's own orderSuggestion from message
+        //   The "📋 *Order:*" line in the analysis was written by the
+        //   analyzer using getOrderTypeSuggestion(entryPrice, currentPrice).
+        //   This is the most accurate source. Use it when found.
+        //
+        // Priority 2 — Live price fallback (tighter 0.3% band)
+        //   If the message didn't contain the Order line (e.g. a custom
+        //   message or an older format), compare live price to entry.
+        //   Use a tight 0.3% tolerance so only true at-market entries
+        //   classify as MARKET; anything else is a LIMIT.
+        //
+        // Priority 3 — Safe default: MARKET / active
+        //   When no live price is available and the message has no order
+        //   line (e.g. a manually typed trade), default to MARKET so the
+        //   trade is immediately tracked.
+        //
+        let orderType;
+        let tradeStatus;
+
         if (parsedOrderType) {
-            orderType   = parsedOrderType;
+            // ── PRIORITY 1: trust the analyzer's explicit output ──
+            orderType   = parsedOrderType;            // 'LIMIT' or 'MARKET'
             tradeStatus = orderType === 'MARKET' ? 'active' : 'pending';
         } else if (livePrice) {
+            // ── PRIORITY 2: price-proximity fallback (tighter band) ──
+            // Old code used 0.5% which is too wide and always fires.
+            // 0.3% means only truly at-market entries become MARKET.
             const priceDiffPct = Math.abs(livePrice - entry) / entry * 100;
             orderType   = priceDiffPct <= 0.3 ? 'MARKET' : 'LIMIT';
             tradeStatus = orderType === 'MARKET' ? 'active' : 'pending';
         } else {
+            // ── PRIORITY 3: no live price, no parsed type → safe default ──
             orderType   = 'MARKET';
             tradeStatus = 'active';
         }
 
+        // For active (MARKET) trades, record the actual fill price
         const fillPrice = tradeStatus === 'active' ? (livePrice || entry) : 0;
 
-        // ════════════════════════════════════════════════════════════
-        // v7: SAVE TRADE WITH FULL BACKTESTING METADATA
-        // ─────────────────────────────────────────────────────────
-        // These fields are stored in the MongoDB document and will be
-        // consumed by the upcoming AI Backtesting module to answer:
-        //   • "Which daily biases produce the most wins?"
-        //   • "Does Golden Confluence improve win rate?"
-        //   • "Which reasons (score factors) correlate with profit?"
-        //   • "Does market regime (trending/ranging) affect results?"
-        // ════════════════════════════════════════════════════════════
+        // Save trade to database
         await db.saveTrade({
             userJid: m.sender,
             coin, type: 'future', direction,
+            // ✅ FIX: tp = final target (TP3), tp2 = second target. Before fix both were TP2.
             entry, tp: tp3 || tp, tp1: tp1 || tp, tp2: tp, sl,
             rrr: `1:${(Math.abs((tp3 || tp) - entry) / Math.abs(entry - sl)).toFixed(2)}`,
-            status:    tradeStatus,
-            orderType: orderType,
+            status:    tradeStatus,   // ← 'active' or 'pending' (fixed)
+            orderType: orderType,     // ← 'MARKET' or 'LIMIT' (fixed)
             fillPrice: fillPrice,
             isPaper: true,
             leverage, quantity, marginUsed,
             score, timeframe,
-            // ── v7 Backtesting fields ──────────────────────────────
-            tradeCategory:  tradeCategory  || null,  // '📅 SWING TRADE...' / '⚡ HIGH-PROB SCALP' etc.
-            reasons:        reasons        || null,  // 'MTF Bull, Bull OB, ChoCH, ⭐ GOLDEN CONFLUENCE...'
-            dailyBias:      dailyBias      || null,  // 'BULLISH' / 'BEARISH' / 'RANGING' / null
-            regimeLabel:    regimeLabel    || null,  // 'TRENDING' / 'RANGING' / 'TRANSITION' / null
-            goldenConf:     goldenConf     || false, // true = Golden Confluence bonus was active
-            openMethod:     'PAPER',                 // PAPER = manual paper trade via .paper command
         });
 
-        // ── Build Display Strings ─────────────────────────────────
-        const coinBase  = coin.replace('USDT','');
-        const dirEmoji  = direction === 'LONG' ? '🟢' : '🔴';
-        const qtyStr    = quantity < 1 ? quantity.toFixed(4) : quantity.toFixed(2);
-        const slPct     = (Math.abs(entry - sl) / entry * 100).toFixed(2);
-        const tpPct     = (Math.abs(tp - entry) / entry * 100).toFixed(2);
-        const rrr       = (Math.abs(tp - entry) / Math.abs(entry - sl)).toFixed(2);
-        const tp1Pct    = tp1 ? (Math.abs(tp1 - entry) / entry * 100).toFixed(2) : '0.00';
+        // Build display strings
+        const coinBase = coin.replace('USDT','');
+        const dirEmoji = direction === 'LONG' ? '🟢' : '🔴';
+        const qtyStr   = quantity < 1 ? quantity.toFixed(4) : quantity.toFixed(2);
+        const slPct    = (Math.abs(entry - sl) / entry * 100).toFixed(2);
+        const tpPct    = (Math.abs(tp - entry) / entry * 100).toFixed(2);
+        const rrr      = (Math.abs(tp - entry) / Math.abs(entry - sl)).toFixed(2);
+        const tp1Pct   = tp1 ? (Math.abs(tp1 - entry) / entry * 100).toFixed(2) : '0.00';
 
+        // ── Order type display lines ──────────────────────────────
         const orderTypeDisplay = orderType === 'MARKET'
             ? '⚡ MARKET ORDER (Active Now)'
             : '⏳ LIMIT ORDER (Pending Fill)';
+
         const statusDisplay = tradeStatus === 'active'
             ? '🟢 ACTIVE'
             : '🟡 PENDING — Entry ලඟා වෙනකම් trade tracker wait කරයි';
 
+        // ── Live price context line ───────────────────────────────
         let livePriceNote = '';
         if (livePrice) {
             const distPct = (Math.abs(livePrice - entry) / entry * 100).toFixed(2);
@@ -370,19 +354,9 @@ cmd({
             }
         }
 
+        // ── Trade category note (MTF classification) ─────────────
         const categoryNote = tradeCategory
             ? `\n📋 Type:       ${tradeCategory}`
-            : '';
-
-        // ── v7: Daily Bias & Golden Confluence display ────────────
-        const biasNote = dailyBias
-            ? `\n📅 Daily Bias: ${dailyBias} ${dailyBias === 'BULLISH' ? '🟢' : dailyBias === 'BEARISH' ? '🔴' : '⚪'}`
-            : '';
-        const regimeNote = regimeLabel
-            ? `\n📊 Regime:     ${regimeLabel}`
-            : '';
-        const goldenNote = goldenConf
-            ? `\n⭐ *GOLDEN CONFLUENCE* — Institutional-grade setup!`
             : '';
 
         await reply(`
@@ -390,7 +364,7 @@ cmd({
 ━━━━━━━━━━━━━━━━━━━━━━
 
 🪙 *${coinBase}/USDT* ${dirEmoji} *${direction}*
-📊 Score: ${score}/90 | ⏱️ ${timeframe}${categoryNote}${biasNote}${regimeNote}${goldenNote}
+📊 Score: ${score}/50 | ⏱️ ${timeframe}${categoryNote}
 
 *Position Details:*
 📍 Entry:     $${entry}${livePriceNote}
@@ -450,6 +424,7 @@ cmd({
             );
         }
 
+        // Get all live prices in parallel
         const prices = await Promise.all(
             trades.map(t => getLivePrice(t.coin).catch(() => null))
         );
@@ -478,11 +453,13 @@ cmd({
                 pnlStr   = `${unrealizedPnL >= 0 ? '+' : ''}$${unrealizedPnL.toFixed(2)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)`;
             }
 
+            // Distance to TP/SL
             const distToSL = livePrice ? (Math.abs(livePrice - t.sl) / livePrice * 100).toFixed(1) : '?';
             const openTime  = new Date(t.openTime);
             const hoursOpen = ((Date.now() - openTime) / 3600000).toFixed(1);
 
-            const orderTag  = t.orderType === 'LIMIT' ? '⏳ LIMIT' : '⚡ MARKET';
+            // ── Status tag: pending or active (with fill price if filled LIMIT) ──
+            const orderTag = t.orderType === 'LIMIT' ? '⏳ LIMIT' : '⚡ MARKET';
             const statusTag = t.status === 'pending'
                 ? `${orderTag} ORDER — ⏳ Waiting for Entry Fill`
                 : t.orderType === 'LIMIT'
@@ -493,16 +470,11 @@ cmd({
             const tp2Status = t.tp2Hit ? '✅' : '⬜';
             const dcaStatus = t.dcaLevel > 0 ? ' | ⚠️ DCA Zone Hit' : '';
 
-            // v7: Show Daily Bias and Golden Confluence if saved
-            const biasTag = t.dailyBias
-                ? `\n📅 Bias: ${t.dailyBias} ${t.dailyBias === 'BULLISH' ? '🟢' : t.dailyBias === 'BEARISH' ? '🔴' : '⚪'}` +
-                  (t.goldenConf ? ' | ⭐ Golden Conf' : '')
-                : '';
-
             msg += `*${i+1}. ${coinBase}/USDT* ${dirEmoji} ${t.direction} (${t.leverage || '?'}x)\n`;
-            msg += `📋 ${statusTag}${dcaStatus}${biasTag}\n`;
+            msg += `📋 ${statusTag}${dcaStatus}\n`;
             msg += `📍 Entry: $${t.entry} → 💹 Live: ${livePrice ? '$' + livePrice.toFixed(4) : 'N/A'}\n`;
 
+            // For pending trades: show distance and which direction needed
             if (t.status === 'pending' && livePrice) {
                 const distToEntry = ((Math.abs(livePrice - t.entry) / t.entry) * 100).toFixed(2);
                 const directionNeeded =
@@ -513,6 +485,8 @@ cmd({
             }
 
             msg += `${pnlEmoji} *PnL: ${t.status === 'pending' ? '⏳ Pending fill...' : pnlStr}*\n`;
+            // ✅ FIX: t.tp = TP3 (final target), t.tp2 = TP2 (intermediate target)
+            // Show TP2 and TP3 separately — they should be different values now.
             const tp2Display = t.tp2 && parseFloat(t.tp2) !== parseFloat(t.tp)
                 ? parseFloat(t.tp2).toFixed(4)
                 : null;
@@ -540,7 +514,6 @@ cmd({
 
 // ═══════════════════════════════════════════════════════════════
 // CMD 3: .closepaper <COIN> — Manually close paper trade
-//  v7: Saves close metadata for AI Backtesting module
 // ═══════════════════════════════════════════════════════════════
 cmd({
     pattern: 'closepaper',
@@ -566,22 +539,14 @@ cmd({
         if (!trade) return await reply(`❌ ${coin} paper trade open නෑ.\n*.myptrades* ලෙස positions බලන්න.`);
 
         const livePrice = await getLivePrice(coin);
-        const closeTime = new Date();
-
         let paperProfit = 0, result = 'BREAK-EVEN', pnlPct = 0;
 
         if (trade.status === 'pending') {
-            // ── Close a never-filled pending order — no P&L ──────
-            // v7: Save cancel metadata for backtesting
+            // Close a pending (never-filled) trade — no P&L
             await db.Trade.findByIdAndUpdate(trade._id, {
-                status:      'closed',
-                result:      'CANCELLED',
+                status: 'closed',
+                result: 'CANCELLED',
                 paperProfit: 0,
-                // v7 backtesting close metadata
-                closeType:   'CANCELLED',
-                closePrice:  livePrice || 0,
-                closeTime:   closeTime,
-                closeMethod: 'MANUAL',
             });
             const coinBase = coin.replace('USDT','');
             return await reply(
@@ -606,38 +571,10 @@ cmd({
         await db.closeTrade(trade._id, result, pnlPct, paperProfit);
         await db.updatePaperBalance(m.sender, paperProfit, result === 'WIN', result === 'BREAK-EVEN');
 
-        // ── v7: Save close metadata for AI Backtesting module ────
-        // This is saved AFTER db.closeTrade() to ensure the document
-        // exists with the closed status. These fields help the backtester
-        // understand HOW and WHEN trades were exited:
-        //   closeType   = 'MANUAL' (user closed via .closepaper)
-        //   closePrice  = actual price at close time
-        //   closeTime   = timestamp of close
-        //   closeMethod = 'MANUAL' vs 'AUTO' (scanner trade manager)
-        try {
-            await db.Trade.findByIdAndUpdate(trade._id, {
-                $set: {
-                    closeType:   'MANUAL',
-                    closePrice:  livePrice || trade.entry,
-                    closeTime:   closeTime,
-                    closeMethod: 'MANUAL',
-                }
-            });
-        } catch (_metaErr) { /* non-critical — trade is already closed */ }
-
         const user      = await db.getUser(m.sender);
         const resEmoji  = result === 'WIN' ? '✅' : result === 'LOSS' ? '❌' : '➖';
         const coinBase  = coin.replace('USDT','');
         const orderTag  = trade.orderType === 'LIMIT' ? '⏳ LIMIT (Filled)' : '⚡ MARKET';
-
-        // v7: Include backtesting metadata in close confirmation
-        const biasTag    = trade.dailyBias
-            ? `\n📅 Daily Bias at Entry: ${trade.dailyBias} ${trade.dailyBias === 'BULLISH' ? '🟢' : trade.dailyBias === 'BEARISH' ? '🔴' : '⚪'}`
-            : '';
-        const goldenTag  = trade.goldenConf ? `\n⭐ Golden Confluence was active` : '';
-        const reasonsTag = trade.reasons
-            ? `\n📋 Entry Reasons: _${trade.reasons.length > 80 ? trade.reasons.slice(0, 80) + '...' : trade.reasons}_`
-            : '';
 
         await reply(`
 ${resEmoji} *PAPER TRADE CLOSED (Manual)*
@@ -645,7 +582,7 @@ ${resEmoji} *PAPER TRADE CLOSED (Manual)*
 🪙 ${coinBase}/USDT | ${trade.direction}
 📋 Order: ${orderTag}
 📍 Entry:  $${trade.entry}
-💹 Close:  ${livePrice ? '$' + livePrice.toFixed(4) : 'N/A'}${biasTag}${goldenTag}${reasonsTag}
+💹 Close:  ${livePrice ? '$' + livePrice.toFixed(4) : 'N/A'}
 
 💰 *PnL: ${paperProfit >= 0 ? '+' : ''}$${paperProfit.toFixed(2)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)*
 📊 Result: *${result}*
@@ -661,7 +598,6 @@ ${resEmoji} *PAPER TRADE CLOSED (Manual)*
 
 // ═══════════════════════════════════════════════════════════════
 // CMD 4: .paperhistory — Show closed paper trade history + PnL
-//  v7: Shows Daily Bias and Golden Confluence in history records
 // ═══════════════════════════════════════════════════════════════
 cmd({
     pattern: 'paperhistory',
@@ -693,9 +629,6 @@ cmd({
 
         let wins = 0, losses = 0, breakEvens = 0, totalPnL = 0;
         let biggestWin = null, biggestLoss = null;
-        let goldenWins = 0, goldenLosses = 0;  // v7: track golden confluence stats
-        let biasWins   = { BULLISH: 0, BEARISH: 0, RANGING: 0 };
-        let biasLosses = { BULLISH: 0, BEARISH: 0, RANGING: 0 };
 
         let msg = `📜 *PAPER TRADE HISTORY (Last ${trades.length})*\n`;
         msg += `💰 Balance: $${user.paperBalance.toFixed(2)} | Start: $${startBal.toFixed(2)}\n`;
@@ -707,33 +640,19 @@ cmd({
             const coinBase = t.coin.replace('USDT', '');
             const dirEmoji = t.direction === 'LONG' ? '🟢' : '🔴';
             const resEmoji = t.result === 'WIN' ? '✅' : t.result === 'LOSS' ? '❌' : t.result === 'CANCELLED' ? '🗑️' : '➖';
-            const pnl      = t.paperProfit || 0;
-            const pnlStr   = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
-            const pnlPct   = t.marginUsed > 0 ? (pnl / t.marginUsed * 100) : 0;
+            const pnl     = t.paperProfit || 0;
+            const pnlStr  = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
+            const pnlPct  = t.marginUsed > 0 ? (pnl / t.marginUsed * 100) : 0;
             const orderTag = t.orderType === 'LIMIT' ? '⏳' : '⚡';
-            const goldIcon = t.goldenConf ? ' ⭐' : '';
-            const biasIcon = t.dailyBias
-                ? (t.dailyBias === 'BULLISH' ? ' 🟢' : t.dailyBias === 'BEARISH' ? ' 🔴' : ' ⚪')
-                : '';
 
             totalPnL += pnl;
-            if      (t.result === 'WIN') {
-                wins++;
-                if (!biggestWin  || pnl > biggestWin.pnl)  biggestWin  = { coin: coinBase, pnl };
-                if (t.goldenConf) goldenWins++;
-                if (t.dailyBias && biasWins[t.dailyBias] !== undefined) biasWins[t.dailyBias]++;
-            }
-            else if (t.result === 'LOSS') {
-                losses++;
-                if (!biggestLoss || pnl < biggestLoss.pnl) biggestLoss = { coin: coinBase, pnl };
-                if (t.goldenConf) goldenLosses++;
-                if (t.dailyBias && biasLosses[t.dailyBias] !== undefined) biasLosses[t.dailyBias]++;
-            }
+            if      (t.result === 'WIN')   { wins++;       if (!biggestWin  || pnl > biggestWin.pnl)  biggestWin  = { coin: coinBase, pnl }; }
+            else if (t.result === 'LOSS')  { losses++;     if (!biggestLoss || pnl < biggestLoss.pnl) biggestLoss = { coin: coinBase, pnl }; }
             else if (t.result !== 'CANCELLED') breakEvens++;
 
             const openDate = new Date(t.openTime || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
-            msg += `${resEmoji} *${coinBase}* ${dirEmoji} ${t.direction} ${orderTag}${goldIcon}${biasIcon} | ${openDate}\n`;
+            msg += `${resEmoji} *${coinBase}* ${dirEmoji} ${t.direction} ${orderTag} | ${openDate}\n`;
             msg += `   📍 $${parseFloat(t.entry).toFixed(4)} → `;
             msg += `🎯 $${parseFloat(t.tp || 0).toFixed(4)} | 🛡️ $${parseFloat(t.sl || 0).toFixed(4)}\n`;
             msg += `   💰 PnL: *${pnlStr}* (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%) | ${t.leverage || '?'}x\n\n`;
@@ -749,23 +668,6 @@ cmd({
         msg += `💰 *Total PnL: ${totalPnL >= 0 ? '+' : ''}$${totalPnL.toFixed(2)}*\n`;
         if (biggestWin)  msg += `🥇 Best: +$${biggestWin.pnl.toFixed(2)} (${biggestWin.coin})\n`;
         if (biggestLoss) msg += `💀 Worst: $${biggestLoss.pnl.toFixed(2)} (${biggestLoss.coin})\n`;
-
-        // ── v7: Backtesting insight snippet ──────────────────────
-        const goldenTotal = goldenWins + goldenLosses;
-        if (goldenTotal >= 2) {
-            const goldenRate = ((goldenWins / goldenTotal) * 100).toFixed(0);
-            msg += `\n⭐ *Golden Confluence:* ${goldenRate}% win rate (${goldenWins}W/${goldenLosses}L)\n`;
-        }
-        const biasData = Object.entries(biasWins).map(([b, w]) => ({ b, w, l: biasLosses[b] })).filter(x => (x.w + x.l) >= 2);
-        if (biasData.length) {
-            msg += `📅 *Bias Win Rates:*\n`;
-            biasData.forEach(x => {
-                const r = ((x.w / (x.w + x.l)) * 100).toFixed(0);
-                const em = x.b === 'BULLISH' ? '🟢' : x.b === 'BEARISH' ? '🔴' : '⚪';
-                msg += `   ${em} ${x.b}: ${r}% (${x.w}W/${x.l}L)\n`;
-            });
-        }
-
         msg += `\n💡 *.ph 20* — last 20 trades`;
 
         await reply(msg);
@@ -777,7 +679,7 @@ cmd({
 
 
 // ═══════════════════════════════════════════════════════════════
-// CMD 5: .resetpaper [amount] — Paper account reset
+// CMD 5: .resetpaper [amount] — Paper account reset to chosen amount
 // ═══════════════════════════════════════════════════════════════
 cmd({
     pattern: 'resetpaper',
@@ -788,6 +690,7 @@ cmd({
     filename: __filename
 }, async (conn, mek, m, { reply, args }) => {
     try {
+        // Amount — arg ලෙස දීලා නැත්නම් margin use කරනවා
         let resetAmount = 0;
         if (args[0] && !isNaN(parseFloat(args[0]))) {
             resetAmount = parseFloat(args[0]);
@@ -804,6 +707,7 @@ cmd({
             );
         }
 
+        // Close all open paper trades first
         const openTrades = await db.Trade.find({
             userJid: m.sender,
             isPaper: true,
@@ -822,20 +726,18 @@ cmd({
                     paperProfit = diff * trade.quantity;
                 }
                 await db.Trade.findByIdAndUpdate(trade._id, {
-                    status:      'closed',
-                    result:      'MANUAL_RESET',
-                    paperProfit: parseFloat(paperProfit.toFixed(2)),
-                    closeType:   'RESET',
-                    closePrice:  livePrice || trade.entry,
-                    closeTime:   new Date(),
-                    closeMethod: 'MANUAL',
+                    status: 'closed',
+                    result: 'MANUAL_RESET',
+                    paperProfit: parseFloat(paperProfit.toFixed(2))
                 });
                 closedCount++;
             } catch(e) { /* skip */ }
         }
 
+        // Reset paper account — balance, start balance, stats, win/loss counters
         await db.setPaperCapital(m.sender, resetAmount);
 
+        // Also update margin if amount provided
         if (args[0] && !isNaN(parseFloat(args[0]))) {
             await db.setMargin(m.sender, resetAmount);
         }
