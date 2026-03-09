@@ -48,16 +48,52 @@ function parseAnalysisMsg(text) {
     const coin = (coinMatch[1]).replace('USDT','') + 'USDT';
 
     // ── Direction ─────────────────────────────────────────────────
-    // Read ONLY from "Smart Entry" or the explicit direction line to avoid
-    // false hits from reason strings like "Short OB 🔴" or "Bear Breaker"
-    const smartEntryMatch = text.match(/Smart Entry[^\n]*?(LONG|SHORT)/i)
-        || text.match(/\*?(LONG|SHORT)\*?\s*$|direction[":\s]*(LONG|SHORT)/im);
-    let direction = 'LONG';
-    if (smartEntryMatch) {
-        direction = smartEntryMatch[1].toUpperCase();
+    // PRIORITY ORDER (highest → lowest reliability):
+    //   1. Emoji+word on header line: "🔴 *SHORT*" or "🟢 *LONG*"
+    //      This is written by future.js/spot.js — most reliable.
+    //   2. [TARGETS|...] tag — machine-generated, reliable but no direction field.
+    //   3. ICT/Smart Entry line pattern.
+    //   4. Fallback: full-text LONG/SHORT scan with word-boundary guards.
+    //
+    // WHY: WhatsApp message encoding can cause regex anchors ($) to behave
+    // differently, and reason strings like "Short OB 🔴", "MTF Bear", "3TF Aligned
+    // SHORT" can produce false positives. Using the emoji+word pair from the header
+    // is the only truly unambiguous signal.
+    let direction = 'LONG'; // safe default
+
+    // Method 1 — emoji+word pair (🔴 *SHORT* or 🟢 *LONG*) anywhere in the message
+    // Checks for both green/red emoji paired with the direction word.
+    // Scans only the first 500 chars (header area) to avoid false hits in reasons.
+    const headerText = text.slice(0, 500);
+    const emojiDirMatch =
+        headerText.match(/🔴\s*\*?\s*SHORT\s*\*?/) ? 'SHORT' :
+        headerText.match(/🟢\s*\*?\s*LONG\s*\*?/)  ? 'LONG'  :
+        // Fallback: search full text for same pattern
+        text.match(/🔴\s*\*?\s*SHORT\s*\*?/)        ? 'SHORT' :
+        text.match(/🟢\s*\*?\s*LONG\s*\*?/)         ? 'LONG'  :
+        null;
+
+    if (emojiDirMatch) {
+        direction = emojiDirMatch;
     } else {
-        const shortMatch = text.match(/🔴\s*\*?SHORT\*?|\bSHORT\b(?!.*OB|.*Zone|.*term)/);
-        direction = shortMatch ? 'SHORT' : 'LONG';
+        // Method 2 — ICT / Smart Entry line
+        const smartEntryMatch = text.match(/Smart Entry[^\n]*?(LONG|SHORT)/i);
+        if (smartEntryMatch) {
+            direction = smartEntryMatch[1].toUpperCase();
+        } else {
+            // Method 3 — explicit header pattern with end-of-line anchor
+            const headerLineMatch = text.match(/^\s*(?:🔴|🟢)?\s*\*?(LONG|SHORT)\*?\s*$/im);
+            if (headerLineMatch) {
+                direction = headerLineMatch[1].toUpperCase();
+            } else {
+                // Method 4 — full text scan, avoiding reason-string false positives
+                // Only match uppercase SHORT/LONG (reason strings use mixed case)
+                const fullTextMatch = text.match(/\bSHORT\b(?!\s*OB|\s*Zone|\s*term|\s*Ratio)/)
+                    ? 'SHORT'
+                    : null;
+                if (fullTextMatch) direction = fullTextMatch;
+            }
+        }
     }
 
     // ── Entry ─────────────────────────────────────────────────────
@@ -325,11 +361,19 @@ cmd({
         // Build display strings
         const coinBase = coin.replace('USDT','');
         const dirEmoji = direction === 'LONG' ? '🟢' : '🔴';
+        const isLong   = direction === 'LONG';
         const qtyStr   = quantity < 1 ? quantity.toFixed(4) : quantity.toFixed(2);
+        // SL is always a loss direction
         const slPct    = (Math.abs(entry - sl) / entry * 100).toFixed(2);
         const tpPct    = (Math.abs(tp - entry) / entry * 100).toFixed(2);
         const rrr      = (Math.abs(tp - entry) / Math.abs(entry - sl)).toFixed(2);
         const tp1Pct   = tp1 ? (Math.abs(tp1 - entry) / entry * 100).toFixed(2) : '0.00';
+        // For LONG: TPs are above entry (+profit). For SHORT: TPs are below entry (+profit).
+        // Validate TP direction — warn if TPs are on the wrong side of entry
+        const tp1Valid = tp1 ? (isLong ? tp1 > entry : tp1 < entry) : true;
+        const tp2Valid = tp  ? (isLong ? tp  > entry : tp  < entry) : true;
+        const tp1Note  = !tp1Valid ? ' ⚠️' : '';
+        const tp2Note  = !tp2Valid ? ' ⚠️' : '';
 
         // ── Order type display lines ──────────────────────────────
         const orderTypeDisplay = orderType === 'MARKET'
@@ -364,14 +408,15 @@ cmd({
 ━━━━━━━━━━━━━━━━━━━━━━
 
 🪙 *${coinBase}/USDT* ${dirEmoji} *${direction}*
-📊 Score: ${score}/50 | ⏱️ ${timeframe}${categoryNote}
+📊 Score: ${score}/100 | ⏱️ ${timeframe}${categoryNote}
 
 *Position Details:*
 📍 Entry:     $${entry}${livePriceNote}
-🎯 TP1:       $${tp1 ? tp1.toFixed(4) : 'N/A'} (+${tp1Pct}%)
-🎯 TP2:       $${tp.toFixed(4)} (+${tpPct}%)
+🎯 TP1:       $${tp1 ? tp1.toFixed(4) : 'N/A'} (+${tp1Pct}%)${tp1Note}
+🎯 TP2:       $${tp.toFixed(4)} (+${tpPct}%)${tp2Note}
 ${tp3 ? `🎯 TP3:       $${tp3.toFixed(4)} (+${(Math.abs(tp3 - entry) / entry * 100).toFixed(2)}%)\n` : ''}🛡️ SL:        $${sl} (-${slPct}%)
 ⚖️ RRR:       1:${rrr}
+${!tp1Valid || !tp2Valid ? '\n⚠️ _Warning: TP levels may be on wrong side of entry. Check analysis direction._\n' : ''}
 
 *Virtual Position:*
 ⚙️ Leverage:  ${leverage}x (Isolated)

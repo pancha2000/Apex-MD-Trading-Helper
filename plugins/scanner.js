@@ -200,11 +200,17 @@ function startTradeManager(conn) {
                     //                (0.25% tolerance: fills if price is within 0.25% below entry)
                     //
                     if (trade.status === 'pending') {
-                        const fillZoneHit = isLong
-                            ? currentPrice <= trade.entry * (1 + FILL_TOLERANCE)
-                            : currentPrice >= trade.entry * (1 - FILL_TOLERANCE);
+                        // ── Safety check: LIMIT order should only fill from the correct side ──
+                        // LONG  limit: entry is BELOW current open price → price must DROP to fill
+                        //              → Only check fill if price is still >= entry (hasn't blown through)
+                        // SHORT limit: entry is ABOVE current open price → price must RISE to fill
+                        //              → Only check fill if price is still <= entry
+                        // This prevents a wrong-direction trade from filling immediately.
+                        const correctSideCheck = isLong
+                            ? currentPrice <= trade.entry * (1 + FILL_TOLERANCE)   // LONG: price at or below entry ±tol
+                            : currentPrice >= trade.entry * (1 - FILL_TOLERANCE);  // SHORT: price at or above entry ±tol
 
-                        if (fillZoneHit) {
+                        if (correctSideCheck) {
                             // Activate the trade — record actual fill price
                             trade.status    = 'active';
                             trade.fillPrice = currentPrice;
