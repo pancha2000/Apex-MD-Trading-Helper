@@ -44,13 +44,28 @@ async function getSentimentCached() {
     return cachedSentiment;
 }
 
+// ─── Signal Cooldown Map ───────────────────────────────────────
+// Prevents the same coin from appearing in consecutive auto-scans.
+// Key: coin symbol  →  Value: timestamp of last signal (ms)
+// Cooldown: 4 hours (= 16 × 15m candles) before a coin can re-appear.
+const SIGNAL_COOLDOWN_MS = 4 * 60 * 60 * 1000;  // 4h
+const _lastSignalTime    = new Map();
+
+function isOnCooldown(coin) {
+    const last = _lastSignalTime.get(coin);
+    return last && (Date.now() - last) < SIGNAL_COOLDOWN_MS;
+}
+function markSignalSent(coin) {
+    _lastSignalTime.set(coin, Date.now());
+}
+
 // ─── Top 5 Setups Scanner ─────────────────────────────────────
 /**
  * Scans all watched coins (already in WS cache) for high-probability
  * setups using the 14-Factor analyzer.
  * No REST calls are made here — everything reads from the in-memory cache.
  */
-async function getTopDownSetups() {
+async function getTopDownSetups(ignoreCooldown = false) {
     const foundSetups = [];
 
     const coinsToScan = binance.isReady()
@@ -59,9 +74,16 @@ async function getTopDownSetups() {
 
     for (const coin of coinsToScan) {
         try {
+            // Skip coins on signal cooldown (auto-scan only — manual .scan ignores cooldown)
+            if (!ignoreCooldown && isOnCooldown(coin)) continue;
+
             const aData = await analyzer.run14FactorAnalysis(coin, '15m');
 
-            if (aData.score >= 12) {   // ✅ Raised from 9→12 for v6 (max 70). Higher = better quality
+            // ── SCORE GATE ───────────────────────────────────────────────
+            // v7 maxScore = 100. Old threshold was 12/70 (17%).
+            // Proportional equivalent: 17/100 ≈ 17. Raised to 20 for quality.
+            // This prevents low-quality setups from flooding results.
+            if (aData.score >= 20) {
                 const sent     = await getSentimentCached();
                 const sentBias = parseFloat(sent.totalBias) || 0;
                 const sentBonus =
@@ -88,14 +110,18 @@ async function getTopDownSetups() {
                 ].filter(Boolean).length;
 
                 // ── QUALITY GATE: require score + confirmations ───────────
-                // High score (≥18): accept with 1+ confirmation
-                // Normal score (12-17): require 2+ confirmations
-                // Both gates: confGate (2+ broad) OR coreConf (2+ SMC)
+                // v7 thresholds (maxScore = 100):
+                //   High score  (≥30): accept with 1+ confirmation  — elite setup
+                //   Normal score(20-29): require 2+ confirmations   — solid setup
+                //   Both gates: confGate (2+ broad) OR coreConf (2+ SMC core)
                 const qualityPass =
-                    adjustedScore >= 18 ? (confScore >= 1 || coreConf >= 1) :
-                    adjustedScore >= 12 ? (confGate || coreConf >= 2) : false;
+                    adjustedScore >= 30 ? (confScore >= 1 || coreConf >= 1) :
+                    adjustedScore >= 20 ? (confGate  || coreConf >= 2) : false;
 
                 if (!qualityPass) continue;
+
+                // Mark this coin — won't appear again for 4h in auto-scan
+                markSignalSent(coin);
 
                 foundSetups.push({
                     coin:           coin.replace('USDT', ''),
@@ -466,9 +492,8 @@ async function runSignalScan() {
     if (!_connRef || !_ownerJidRef) return;
 
     try {
-        const setups = await getTopDownSetups();
+        const setups = await getTopDownSetups(false);  // auto-scan: respect cooldown to avoid repeating same coins
         if (!setups || setups.length === 0) return;
-
         const sent  = await getSentimentCached();
         let msg = `🚀 *14-FACTOR AUTO SIGNAL ALERT* 🚀\n_Top ${setups.length} Best Setups Now_\n\n`;
         msg += `🧠 *Market:* ${sent.overallSentiment} | ${sent.fngEmoji} F&G: ${sent.fngValue}\n\n`;
@@ -620,12 +645,12 @@ async (conn, mek, m, { reply }) => {
             `_(No REST polling — reads from live WS cache)_`
         );
 
-        const setups = await getTopDownSetups();
+        const setups = await getTopDownSetups(true);  // ignoreCooldown: manual scan always shows current best
 
         if (setups.length === 0) {
             return await reply(
                 `╔═══════════════════════════╗\n║  🔍 *MANUAL SCAN RESULTS*  ║\n╚═══════════════════════════╝\n\n` +
-                `Score 12/70 ට වඩා ලබාගත් Setups දැනට නොමැත. ⚪\n\nකිසිවේලාවකට පසු නැවත .scan ගසන්න.\n\n${scanStatus}`
+                `Score 20/100 ට වඩා ලබාගත් Setups දැනට නොමැත. ⚪\n\nකිසිවේලාවකට පසු නැවත .scan ගසන්න.\n\n${scanStatus}`
             );
         }
 
@@ -649,7 +674,7 @@ async (conn, mek, m, { reply }) => {
                 ? `\n   ${s.bbSqueeze.exploding ? '💥' : '⚡'} ${s.bbSqueeze.display}` : '';
             const tfTag     = s.tf3Align && s.tf3Align.aligned
                 ? `\n   ✅ ${s.tf3Align.display}` : '';
-            const confTag   = `\n   🔒 Confirmations: ${s.confScore || s.coreConf}/${s.confScore ? '13' : '4'} ${s.confGate ? '✅' : ''}`;
+            const confTag   = `\n   🔒 Confirmations: ${s.confScore || s.coreConf}/${s.confScore ? '21' : '4'} ${s.confGate ? '✅' : ''}`;
             const wyckTag   = s.reasons && s.reasons.includes('Wyckoff') ? `\n   🌊 ${s.reasons.split(',').find(r=>r.includes('Wyckoff'))?.trim()}` : '';
             const ichiTag   = s.reasons && s.reasons.includes('Ichimoku') ? `\n   ☁️ ${s.reasons.split(',').find(r=>r.includes('Ichimoku'))?.trim()}` : '';
             outMsg +=
